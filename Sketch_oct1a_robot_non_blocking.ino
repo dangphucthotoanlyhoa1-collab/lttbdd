@@ -254,3 +254,111 @@ void loop() {
   // Vì tất cả logic đã nằm trong các Task RTOS
   vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
+
+// ====== Biến toàn cục cho encoder gripper ======
+volatile long encoder_count = 0;           // tổng xung encoder (có dấu)
+volatile long last_encoder_count = 0;      // xung encoder lần trước
+volatile unsigned long last_pulse_time = 0; // thời điểm nhận xung cuối cùng
+const int ENCODER_PIN = 35;                // chân đọc xung encoder (chỉnh theo phần cứng)
+const int Direction_Gripper = 1;           // 1 = cộng xung, -1 = trừ xung (giả định từ code hiện tại)
+
+// Hằng số phát hiện vật thể
+const unsigned long STABLE_THRESHOLD_MS = 500;  // xung phải ổn định trong 500ms
+const int PULSE_DROP_THRESHOLD = 20;            // nếu xung giảm < 20 trong 1s => kẹp vật
+const unsigned long CHECK_INTERVAL_MS = 1000;   // kiểm tra mỗi 1 giây
+
+// ISR: ngắt đọc xung encoder
+void IRAM_ATTR encoderISR() {
+  encoder_count += Direction_Gripper;
+  last_pulse_time = millis();
+}
+
+// Hàm phát hiện vật thể
+// Trả về: true = phát hiện vật thể (kẹp), false = chưa có vật
+bool detectObjectInGripper() {
+  static unsigned long last_check = 0;
+  static long last_stable_count = 0;
+  static bool is_stable = false;
+  static unsigned long stable_start_time = 0;
+
+  unsigned long now = millis();
+
+  // Kiểm tra mỗi CHECK_INTERVAL_MS (1 giây)
+  if (now - last_check < CHECK_INTERVAL_MS) {
+    return false; // chưa đến lúc kiểm tra
+  }
+  last_check = now;
+
+  // Lấy giá trị encoder hiện tại
+  long current_count = encoder_count;
+  long pulse_change = current_count - last_encoder_count;
+
+  Serial.print("Encoder: count="); Serial.print(current_count);
+  Serial.print(", change="); Serial.print(pulse_change);
+  Serial.print(", time_since_pulse="); Serial.print(now - last_pulse_time);
+  Serial.println(" ms");
+
+  // Bước 1: Kiểm tra xung có ổn định không (ít thay đổi trong khoảng thời gian)
+  if (abs(pulse_change) < 5) { // xung thay đổi < 5 => ổn định
+    if (!is_stable) {
+      is_stable = true;
+      stable_start_time = now;
+      last_stable_count = current_count;
+      Serial.println("Encoder stabilized");
+    }
+  } else {
+    // xung còn thay đổi nhiều => chưa ổn định
+    is_stable = false;
+  }
+
+  // Bước 2: Nếu xung đã ổn định, kiểm tra xung có giảm đột ngột không
+  if (is_stable && (now - stable_start_time) >= STABLE_THRESHOLD_MS) {
+    // Sau 500ms ổn định, kiểm tra xung trong 1 giây tiếp theo
+    long stable_pulse_change = current_count - last_stable_count;
+
+    // Nếu xung giảm rất ít hoặc không có xung mới => vật bị kẹp
+    if (abs(stable_pulse_change) < PULSE_DROP_THRESHOLD) {
+      // Kiểm tra thêm: thời gian kể từ xung cuối cùng
+      if ((now - last_pulse_time) > 200) { // không có xung trong 200ms
+        Serial.println("!!! OBJECT DETECTED IN GRIPPER !!!");
+        return true; // phát hiện vật thể
+      }
+    }
+
+    // Reset sau khi kiểm tra ổn định
+    is_stable = false;
+  }
+
+  last_encoder_count = current_count;
+  return false;
+}
+
+// Task chính để phát hiện vật thể liên tục
+void gripperDetectionTask(void *parameter) {
+  for (;;) {
+    if (detectObjectInGripper()) {
+      // Thực hiện hành động khi phát hiện vật thể
+      Serial.println("Action: Stop gripper, object caught!");
+      // Ví dụ: dừng gripper
+      // ledcWrite(GRIPPER_CHANNEL, 0);
+    }
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+// Trong setup(): đăng ký ISR và tạo task phát hiện
+void setup() {
+  // ...existing setup code...
+
+  // Cấu hình encoder ISR
+  pinMode(ENCODER_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN), encoderISR, RISING);
+  // (hoặc FALLING/CHANGE tùy loại encoder)
+
+  // Tạo task phát hiện vật thể
+  xTaskCreate(gripperDetectionTask, "Gripper Detection", 2000, NULL, 2, NULL);
+
+  // ...rest of setup...
+}
+
+// ...existing code...
