@@ -3,8 +3,18 @@
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
-#include "driver/pcnt.h"
 
+// Function prototypes (paste after #include ...)
+void IRAM_ATTR onEncoderPulse();
+long readEncoderCount();
+void MoveAxisGripper(int direction, int speed);
+int DetachObject();
+int homeAxis(AccelStepper &axis, int limPin, const char *name);
+void SetHomeAll();
+void ReturnToHome(void *parameter);
+void MoveJog(void *parameter);
+void motor_task_AUTO(void *parameter);
+void setup_task();
 
 //========== Khai báo cấu trúc tọa độ XYZT và Tốc độ chuyển động ======
 typedef struct
@@ -21,14 +31,14 @@ typedef struct
 } XYZT_Coordinates;
 
 XYZT_Coordinates Moving_Coordinates[1000];
-XYZR_Coordinates Classify[1000];
+XYZT_Coordinates Classify[1000];
 
 //========== Khai báo các đối tượng stepper motor ======
 AccelStepper Axis_Base(AccelStepper::DRIVER, 26, 27); // Step, Dir
 AccelStepper Axis_Shoulder(AccelStepper::DRIVER, 14, 12); // Step, Dir
 AccelStepper Axis_Elbow(AccelStepper::DRIVER, 25, 33); // Step, Dir
-#define Axis_Gripper_forward_PIN 3 // (SỬA) Đặt tên là PIN
-#define Axis_Gripper_backward_PIN 4 // (SỬA) Đặt tên là PIN
+#define Axis_Gripper_forward_PIN 3 // kẹp lại
+#define Axis_Gripper_backward_PIN 4 // mở ra
 volatile int Direction_Gripper = 0; // Hướng kẹp vật: 0= đóng càng, 1=mở càng
 // (XÓA) 2 biến tốc độ này, chúng ta sẽ đọc từ mảng
 // int speedGripperForward = 0; 
@@ -42,26 +52,26 @@ const int LIM_SHOULDER_PIN = 13; // chỉnh theo phần cứng
 const int LIM_ELBOW_PIN    = 23; // chỉnh theo phần cứng
 
 // ====== Các biến điều khiển robot (State Machine) ======
-volatile int robotMode = 0; // 0=AUTO (dùng run()), 1=JOG (dùng runSpeed())
+volatile int Auto_Manual = 0; // 1=AUTO (dùng run()), 0=Manual (dùng runSpeed())
 int classifyMode = 0; // 0=Không phân loại, 1=Phân loại
 volatile int jogCommand = 0; // 0=STOP, 1=Base+, 2=Base-, 3=Shoulder+, 4=Shoulder-, 5=Elbow+, 6=Elbow-
 const float JOG_SPEED = 600.0; // Vận tốc cố định 600
 volatile int autoChainMode = 0; // 0=stop, 1=running
 volatile int autoChainStep = 0; // bước hiện tại trong chuỗi
-const int TotalStep = 0; // Số bước chạy auto (sẽ được cập nhật khi nhận lệnh từ web)
+int TotalStep = 0; // Số bước chạy auto (sẽ được cập nhật khi nhận lệnh từ web)
 
 
 //=======Biến điều khiển encoder gripper ======
 const int ENCODER_PIN = 35; // Chân đọc encoder
 volatile long g_encoderCount = 0;
-
+volatile float Object_Size = 0.0; // Kích thước vật cầm nắm (cm)
+const float GRIPPER_PULSES_PER_CM = 100.0; // Số xung encoder trên mỗi cm di chuyển của gripper
 
 
 // (MỚI) Hằng số phát hiện kẹp (Stall)
 const int GRIPPER_CHECK_INTERVAL = 50;  // ms - Kiểm tra 20 lần/giây
 const int GRIPPER_STALL_THRESHOLD = 5;  // Xung - Nếu ít hơn 5 xung/interval -> coi là Kẹp
 const int GRIPPER_MOVE_THRESHOLD = 15;  // Xung - Phải thấy nhiều hơn 10 xung/interval
-
 
 
 //================================================================================//
@@ -108,7 +118,7 @@ void MoveAxisGripper(int direction, int speed) {
   long value_now = 0;
   long time_last = 0;
   long value_last = 0;
-  int HasConsitantcy = 0;
+  int HasConsitancy = 0;
 
 int DetachObject(){
   time_now = millis();
@@ -118,15 +128,16 @@ int DetachObject(){
     time_last = time_now;
     value_last = value_now;
     if (delta > GRIPPER_MOVE_THRESHOLD){
-      HasConsitantcy = 1; // đã ổn định chuyển động
+      HasConsitancy = 1; // đã ổn định chuyển động
     }
-    if (delta < GRIPPER_STALL_THRESHOLD && HasConsistancy == 1){
+    if (delta < GRIPPER_STALL_THRESHOLD && HasConsitancy == 1){
       Serial.println("Da phat hien vat bi kep!");
+      Object_Size = (float)(value_now) / GRIPPER_PULSES_PER_CM; // tính kích thước vật
         time_now = 0;
         value_now = 0;
         time_last = 0;
         value_last = 0;
-        HasConsitantcy = 0;
+        HasConsitancy = 0;
         return 1; // đã kẹp vật
     }
   }
@@ -134,7 +145,8 @@ int DetachObject(){
 }
 
 // Hàm homing cho 1 trục (blocking)
-void homeAxis(AccelStepper &axis, int limPin, const char *name) {
+int homeAxis(AccelStepper &axis, int limPin, const char *name) {
+  if (Auto_Manual == 0){
   const float fastSpeed = -800; 
   const float slowSpeed = -400; 
   const float retreatSpeed = 400.0; 
@@ -167,43 +179,82 @@ void homeAxis(AccelStepper &axis, int limPin, const char *name) {
   Serial.print(name); 
   Serial.println(" homed!");
   delay(50);
+  return 1; // Homing thành công
+}
 }
 
 // Hàm homing cho cả 3 trục (blocking)
 void SetHomeAll() {
-  Serial.println("Starting homing sequence...");
-  homeAxis(Axis_Base, LIM_BASE_PIN, "Axis Base");
-  homeAxis(Axis_Shoulder, LIM_SHOULDER_PIN, "Axis Shoulder");
-  homeAxis(Axis_Elbow, LIM_ELBOW_PIN, "Axis Elbow");
-  Serial.println("Homing completed!");
+  Auto_Manual = -1;
+  jogCommand = 0;
+  autoChainMode = 0;
+
+  int HomingBase = 0;
+  int HomingShoulder = 0;
+  int HomingElbow = 0;
+  int HomingGripper = 0;
+  int time_out = 0;
+  while (time_out < 20000){ // timeout 20s
+
+      time_out = millis();
+      Serial.println("Starting homing sequence...");
+      HomingBase = homeAxis(Axis_Base, LIM_BASE_PIN, "Axis Base");
+      HomingShoulder =  homeAxis(Axis_Shoulder, LIM_SHOULDER_PIN, "Axis Shoulder");
+      HomingElbow = homeAxis(Axis_Elbow, LIM_ELBOW_PIN, "Axis Elbow");
+      MoveAxisGripper(1, 150); // đóng càng với tốc độ 150
+      HomingGripper = DetachObject();
+
+      if (HomingGripper == 1){
+        MoveAxisGripper(-1, 0); // dừng càng
+        g_encoderCount = 0; // reset encoder count
+      }
+    if (HomingBase && HomingShoulder && HomingElbow && HomingGripper){
+      Serial.println("Homing completed!");
+      Auto_Manual = 0;
+      return;
+      
+    }
+  }
+  return;
 }
 
 //===== Hàm trở về vị trí home (NON-BLOCKING) ======
-void ReturnToHome() {
-  robotMode = 0;
+void ReturnToHome(void *parameter) {
+  Auto_Manual = -1;
   jogCommand = 0;
   autoChainMode = 0; 
   
-  Axis_base.setMaxSpeed(600);
+  while(Axis_Base.distanceToGo() == 0 && 
+        Axis_Shoulder.distanceToGo() == 0 && 
+        Axis_Elbow.distanceToGo() == 0 &&
+        g_encoderCount == 0) // reset encoder count
+        {
+  Axis_Base.setMaxSpeed(600);
   Axis_Shoulder.setMaxSpeed(600);
   Axis_Elbow.setMaxSpeed(600);
 
   Axis_Base.moveTo(0);
   Axis_Shoulder.moveTo(0);
   Axis_Elbow.moveTo(0);
-  
-  Serial.println("Da ra lenh di chuyen ve Home...");
+  MoveAxisGripper(1, 150); // đóng càng với tốc độ 150
+
+  Axis_Base.run();
+  Axis_Shoulder.run();
+  Axis_Elbow.run();
+
+  vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
 }
 
 
 // ====== Move Jog Task (Chế độ JOG) ======
 void MoveJog(void *parameter) {
+
   while(1) { 
-    if (robotMode == 1) { 
+    if (Auto_Manual == 0) { // Chỉ chạy khi ở chế độ MANUAL (JOG)
       Axis_Base.setSpeed(0);
       Axis_Shoulder.setSpeed(0);
-      Axis_Elbow.setSpeed(0);
-
+      Axis_Elbow.setSpeed(0); 
       switch (jogCommand) {
         case 1: Axis_Base.setSpeed(JOG_SPEED); break;
         case 2: Axis_Base.setSpeed(-JOG_SPEED); break;
@@ -224,68 +275,87 @@ void MoveJog(void *parameter) {
 
 //====== (SỬA LẠI HOÀN TOÀN) Task chạy chế độ AUTO (Đồng bộ Stepper + Gripper) ======
 void motor_task_AUTO(void *parameter) {
-
-  while(1) { // Vòng lặp task vô tận
-  
-    if (robotMode == 0) { // Chỉ chạy khi ở chế độ AUTO
+  int Direction_Gripper = 0;
+  int Axis_Gripper_Speed = 0;
+  int Axis_Gripper_Next_Position = 0;
+  while(1) {
+   
+    if (Auto_Manual == 1) { // Chỉ chạy khi ở chế độ AUTO
       if (autoChainMode == 1) { // Chạy chuỗi tự động
         // Kiểm tra xem 3 trục đã dừng lại (hoàn thành bước) chưa
         if (Axis_Base.distanceToGo() == 0 && 
             Axis_Shoulder.distanceToGo() == 0 && 
-            Axis_Elbow.distanceToGo() == 0) {
+            Axis_Elbow.distanceToGo() == 0 &&
+            g_encoderCount == Axis_Gripper_Next_Position) {
+             // và kẹp đã dừng{
               
           // Đã hoàn thành bước autoChainStep
           Serial.print("Hoan thanh buoc: "); Serial.println(autoChainStep);
           autoChainStep++; // Chuyển sang bước tiếp theo
           
-          if (autoChainStep >= TotalStep) {
-
-            autoChainStep = 0; // Dừng lại
-
+          if (autoChainStep > TotalStep) {
+            autoChainStep = 0; 
             }
-          } else {
-            // Còn bước: Ra lệnh cho bước tiếp theo
-            Serial.print("Bat dau buoc: "); Serial.println(autoChainStep);
-            
+          } 
             // Đặt tốc độ MỚI 
             if (classifyMode == 1){ 
             Axis_Base.setMaxSpeed(Classify[autoChainStep].Speed_X);
             Axis_Shoulder.setMaxSpeed(Classify[autoChainStep].Speed_Y);
             Axis_Elbow.setMaxSpeed(Classify[autoChainStep].Speed_Z);
+            Axis_Gripper_Speed = Classify[autoChainStep].Speed_T;
 
-            Ãxis_Base.moveTo(Classify[autoChainStep].X);
+            Axis_Base.moveTo(Classify[autoChainStep].X);
             Axis_Shoulder.moveTo(Classify[autoChainStep].Y);
             Axis_Elbow.moveTo(Classify[autoChainStep].Z);
+            Axis_Gripper_Next_Position = Classify[autoChainStep].T;
+
             }
             else {
             Axis_Base.setMaxSpeed(Moving_Coordinates[autoChainStep].Speed_X);
             Axis_Shoulder.setMaxSpeed(Moving_Coordinates[autoChainStep].Speed_Y);
             Axis_Elbow.setMaxSpeed(Moving_Coordinates[autoChainStep].Speed_Z);
+            Axis_Gripper_Speed = Moving_Coordinates[autoChainStep].Speed_T;
 
             Axis_Base.moveTo(Moving_Coordinates[autoChainStep].X);
             Axis_Shoulder.moveTo(Moving_Coordinates[autoChainStep].Y);
             Axis_Elbow.moveTo(Moving_Coordinates[autoChainStep].Z);
+            Axis_Gripper_Next_Position = Moving_Coordinates[autoChainStep].T;
             }
             // Đặt mục tiêu MỚI
 
           }
         }
-      }   // Kết thúc logic autoChainMode
-       // 2. Luôn gọi run() (cho cả chạy chuỗi và goHome)
+      if (Axis_Gripper_Next_Position > g_encoderCount){
+        Direction_Gripper = 1; // mở càng
+      } else if (Axis_Gripper_Next_Position < g_encoderCount){
+        Direction_Gripper = 0; // đóng càng
+      } else {
+        Direction_Gripper = -1; // dừng
+      }
+      
       Axis_Base.run();
       Axis_Shoulder.run();
       Axis_Elbow.run();
-
+      
+      if (g_encoderCount != Axis_Gripper_Next_Position){
+        MoveAxisGripper(Direction_Gripper, Axis_Gripper_Speed);
+      } else {
+        MoveAxisGripper(-1, 0); // dừng càng
+      }
       
     // Luôn delay để nhả CPU
     vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-}    
+
+      }   
+
+  }
+
 
 // ====== Khởi tạo các task ======
 void setup_task() {
-  xTaskCreate(MoveJog, "MoveJog", 2048, NULL, 5, NULL);
-  xTaskCreate(motor_task_AUTO, "MotorRunAUTO", 4096, NULL, 5, NULL);
+  xTaskCreate(MoveJog, "MoveJog", 2048, NULL, 1, NULL);
+  xTaskCreate(motor_task_AUTO, "MotorRunAUTO", 4096, NULL, 1, NULL);
+  xTaskCreate(ReturnToHome, "ReturnToHome", 4096, NULL, 1, NULL);
 }
 
 // ====== Hàm setup ======
