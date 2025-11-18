@@ -4,17 +4,70 @@
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
 
+/*
+===========Dạng Chuỗi JSON tổng quát cho tất cả tác vụ========================
+{
+  "task": "jog|autochain|homing|status",
+  
+  // === JOG (Manual mode) ===
+  "command": 1,
+  "action": "start|stop",
+  
+  // === AUTOCHAIN (Auto mode) ===
+  "mode": 1,
+  "classify": 0,
+  "totalSteps": 2,
+  "coordinates": [
+    {
+      "X": 0,
+      "Y": 0,
+      "Z": 0,
+      "T": 0,
+      "speed_X": 800,
+      "speed_Y": 800,
+      "speed_Z": 800,
+      "speed_T": 100
+    },
+    {
+      "X": 1000,
+      "Y": 500,
+      "Z": 300,
+      "T": 100,
+      "speed_X": 600,
+      "speed_Y": 600,
+      "speed_Z": 600,
+      "speed_T": 150
+    }
+  ],
+  
+  // === HOMING ===
+  "action": "home|return"
+}
+
+Không phải tất cả các trường trong JSON đều bắt buộc trong mỗi tác vụ. Nó chỉ là 1 JSON tổng quát để cho việc quản lý
+trở nên dễ dàng và đồng bộ.
+
+*/
+
 // Function prototypes 
-void IRAM_ATTR onEncoderPulse();
-long readEncoderCount();
-void MoveAxisGripper(int direction, int speed);
-int DetachObject();
-int homeAxis(AccelStepper &axis, int limPin, const char *name);
-void SetHomeAll();
-void ReturnToHome(void *parameter);
-void MoveJog(void *parameter);
-void motor_task_AUTO(void *parameter);
-void setup_task();
+void IRAM_ATTR onEncoderPulse(); //intererupt handler for encoder
+long readEncoderCount();           //read encoder count safely
+void MoveAxisGripper(int direction, int speed); // direction: 0=close, 1=open, -1=stop
+int DetachObject(); // detect if object is gripped and measure size
+int homeAxis(AccelStepper &axis, int limPin, const char *name); // homing for one axis
+void SetHomeAll(); // homing for all axes
+void ReturnToHome(void *parameter); // non-blocking return to home task
+void MoveJog(void *parameter); // JOG movement task
+void motor_task_AUTO(void *parameter); // AUTO and classify movement task
+void setup_task(); //initialize RTOS tasks
+
+// HTTP handlers
+void handleUnifiedCommand(); // main handler for all tasks
+void handleJog_Unified(); // JOG handler
+void handleAutoChain_Unified(); // AUTOCHAIN handler
+void handleHoming_Unified(); // HOMING handler
+void handleStatus_Unified(); // STATUS handler
+void setup_webserver(); // setup web server and routing
 
 //========== Khai báo cấu trúc tọa độ XYZT và Tốc độ chuyển động ======
 typedef struct
@@ -32,6 +85,13 @@ typedef struct
 
 XYZT_Coordinates Moving_Coordinates[1000];
 XYZT_Coordinates Classify[1000];
+
+//========== Khai báo Web Server và JSON Document ======
+WebServer server(80);
+StaticJsonDocument<4096> jsonDocument;
+// ====== Wi‑Fi credentials (edit to your network) ======
+const char *SSID = "Thanh Gia 1";
+const char *PWD = "ThanhgiA1931";
 
 //========== Khai báo các đối tượng stepper motor ======
 AccelStepper Axis_Base(AccelStepper::DRIVER, 26, 27);     // Step, Dir
@@ -255,9 +315,9 @@ void SetHomeAll()
 void ReturnToHome(void *parameter)
 {
   Auto_Manual = -1;
-  jogCommand = 0;
   autoChainMode = 0;
-
+  jogCommand = 0;
+  
   while (Axis_Base.distanceToGo() == 0 &&
          Axis_Shoulder.distanceToGo() == 0 &&
          Axis_Elbow.distanceToGo() == 0 &&
@@ -276,7 +336,7 @@ void ReturnToHome(void *parameter)
     Axis_Shoulder.run();
     Axis_Elbow.run();
 
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    vTaskDelay(20 / portTICK_PERIOD_MS);
   }
 }
 
@@ -426,10 +486,281 @@ void motor_task_AUTO(void *parameter)
 // ====== Khởi tạo các task ======
 void setup_task()
 {
-  xTaskCreate(MoveJog, "MoveJog", 2048, NULL, 1, NULL);
-  xTaskCreate(motor_task_AUTO, "MotorRunAUTO", 4096, NULL, 1, NULL);
+  xTaskCreate(MoveJog, "MoveJog", 2048, NULL, 2, NULL);
+  xTaskCreate(motor_task_AUTO, "MotorRunAUTO", 4096, NULL, 3, NULL);
   xTaskCreate(ReturnToHome, "ReturnToHome", 4096, NULL, 1, NULL);
 }
+
+//================================================================================//
+//===================== HTTP HANDLERS - Nhận dữ liệu từ Server ===================//
+//================================================================================//
+
+// Main unified handler
+void handleUnifiedCommand() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "application/json", "{\"error\":\"No data received\"}");
+    return;
+  }
+
+  String body = server.arg("plain");
+  deserializeJson(jsonDocument, body);
+
+  // Kiểm tra task có tồn tại không
+  if (!jsonDocument.containsKey("task")) {
+    server.send(400, "application/json", "{\"error\":\"task required\"}");
+    return;
+  }
+
+  const char* task = jsonDocument["task"];
+
+  // Phân phối theo task
+  if (strcmp(task, "jog") == 0) {
+    handleJog_Unified();
+  }
+  else if (strcmp(task, "autochain") == 0) {
+    handleAutoChain_Unified();
+  }
+  else if (strcmp(task, "homing") == 0) {
+    handleHoming_Unified();
+  }
+  else if (strcmp(task, "status") == 0) {
+    handleStatus_Unified();
+  }
+  else {
+    server.send(400, "application/json",
+      "{\"error\":\"Invalid task. Valid: jog, autochain, homing, status\"}");
+  }
+}
+
+// JOG Handler
+void handleJog_Unified() {
+  // Kiểm tra tham số bắt buộc
+  if (!jsonDocument.containsKey("command")) {
+    server.send(400, "application/json", "{\"error\":\"command required (1-8)\"}");
+    return;
+  }
+  if (!jsonDocument.containsKey("action")) {
+    server.send(400, "application/json", "{\"error\":\"action required (start/stop)\"}");
+    return;
+  }
+
+  int command = jsonDocument["command"];
+  const char* action = jsonDocument["action"];
+
+  // Kiểm tra giá trị hợp lệ
+  if (command < 0 || command > 8) {
+    server.send(400, "application/json", "{\"error\":\"command must be 0-8\"}");
+    return;
+  }
+
+  if (strcmp(action, "start") != 0 && strcmp(action, "stop") != 0) {
+    server.send(400, "application/json", "{\"error\":\"action must be start or stop\"}");
+    return;
+  }
+
+  // Xử lý lệnh
+  if (strcmp(action, "start") == 0) {
+    if (command == 0) {
+      server.send(400, "application/json", "{\"error\":\"command cannot be 0 when action is start\"}");
+      return;
+    }
+    Auto_Manual = 0; // Chế độ Manual/JOG
+    autoChainMode = 0;
+    jogCommand = command;
+    server.send(200, "application/json", "{\"status\":\"jog_started\",\"command\":" + String(command) + "}");
+  }
+  else if (strcmp(action, "stop") == 0) {
+    jogCommand = 0;
+    server.send(200, "application/json", "{\"status\":\"jog_stopped\"}");
+  }
+
+  Serial.print("JOG Command: ");
+  Serial.print(command);
+  Serial.print(", Action: ");
+  Serial.println(action);
+}
+
+// AUTOCHAIN Handler
+void handleAutoChain_Unified() {
+  // Kiểm tra tham số bắt buộc
+  if (!jsonDocument.containsKey("mode")) {
+    server.send(400, "application/json", "{\"error\":\"mode required (0=stop, 1=run)\"}");
+    return;
+  }
+  if (!jsonDocument.containsKey("totalSteps")) {
+    server.send(400, "application/json", "{\"error\":\"totalSteps required\"}");
+    return;
+  }
+  if (!jsonDocument.containsKey("coordinates")) {
+    server.send(400, "application/json", "{\"error\":\"coordinates array required\"}");
+    return;
+  }
+
+  int mode = jsonDocument["mode"];
+  int totalSteps = jsonDocument["totalSteps"];
+  JsonArray coords = jsonDocument["coordinates"];
+  int classify = jsonDocument["classify"] | 0;
+
+  // Kiểm tra giá trị
+  if (mode < 0 || mode > 1) {
+    server.send(400, "application/json", "{\"error\":\"mode must be 0 or 1\"}");
+    return;
+  }
+  if (totalSteps <= 0 || totalSteps > 1000) {
+    server.send(400, "application/json", "{\"error\":\"totalSteps must be 1-1000\"}");
+    return;
+  }
+
+  // Kiểm tra số phần tử trong mảng
+  if (coords.size() != totalSteps) {
+    server.send(400, "application/json",
+      "{\"error\":\"coordinates size mismatch. Got " + String(coords.size()) +
+      ", expected " + String(totalSteps) + "\"}");
+    return;
+  }
+
+  // Kiểm tra mỗi coordinate có đủ tham số
+  for (int i = 0; i < totalSteps; i++) {
+    if (!coords[i].containsKey("X") || !coords[i].containsKey("Y") ||
+        !coords[i].containsKey("Z") || !coords[i].containsKey("T") ||
+        !coords[i].containsKey("speed_X") || !coords[i].containsKey("speed_Y") ||
+        !coords[i].containsKey("speed_Z") || !coords[i].containsKey("speed_T")) {
+      server.send(400, "application/json",
+        "{\"error\":\"coordinate at index " + String(i) + " missing required fields\"}");
+      return;
+    }
+  }
+
+  // Lưu dữ liệu vào mảng
+  for (int i = 0; i < totalSteps; i++) {
+    if (classify == 1) {
+      Classify[i].X = coords[i]["X"];
+      Classify[i].Y = coords[i]["Y"];
+      Classify[i].Z = coords[i]["Z"];
+      Classify[i].T = coords[i]["T"];
+      Classify[i].Speed_X = coords[i].containsKey("speed_X") ? (float)coords[i]["speed_X"] : 600.0;
+      Classify[i].Speed_Y = coords[i].containsKey("speed_Y") ? (float)coords[i]["speed_Y"] : 600.0;
+      Classify[i].Speed_Z = coords[i].containsKey("speed_Z") ? (float)coords[i]["speed_Z"] : 600.0;
+      Classify[i].Speed_T = coords[i].containsKey("speed_T") ? (int)coords[i]["speed_T"] : 200;
+    } else {
+      Moving_Coordinates[i].X = coords[i]["X"];
+      Moving_Coordinates[i].Y = coords[i]["Y"];
+      Moving_Coordinates[i].Z = coords[i]["Z"];
+      Moving_Coordinates[i].T = coords[i]["T"];
+      Moving_Coordinates[i].Speed_X = coords[i].containsKey("speed_X") ? (float)coords[i]["speed_X"] : 600.0;
+      Moving_Coordinates[i].Speed_Y = coords[i].containsKey("speed_Y") ? (float)coords[i]["speed_Y"] : 600.0;
+      Moving_Coordinates[i].Speed_Z = coords[i].containsKey("speed_Z") ? (float)coords[i]["speed_Z"] : 600.0;
+      Moving_Coordinates[i].Speed_T = coords[i].containsKey("speed_T") ? (int)coords[i]["speed_T"] : 200;
+    }
+  }
+
+  // Cập nhật trạng thái
+  Auto_Manual = 1; // Chế độ AUTO
+  classifyMode = classify;
+  autoChainStep = 0;
+  autoChainMode = mode;
+  TotalStep = totalSteps;
+
+  if (mode == 1) {
+    server.send(200, "application/json",
+      "{\"status\":\"autochain_started\",\"totalSteps\":" + String(totalSteps) + "}");
+    Serial.println("AUTOCHAIN: Started");
+  } else {
+    autoChainMode = 0;
+    server.send(200, "application/json", "{\"status\":\"autochain_stopped\"}");
+    Serial.println("AUTOCHAIN: Stopped");
+  }
+}
+
+// HOMING Handler
+void handleHoming_Unified() {
+  if (!jsonDocument.containsKey("action")) {
+    server.send(400, "application/json", "{\"error\":\"action required (home/return)\"}");
+    return;
+  }
+
+  const char* action = jsonDocument["action"];
+
+  if (strcmp(action, "home") == 0) {
+    jogCommand = 0;
+    autoChainMode = 0;
+    SetHomeAll();
+    server.send(200, "application/json", "{\"status\":\"homing_completed\"}");
+    Serial.println("HOMING: Completed");
+  }
+  else if (strcmp(action, "return") == 0) {
+    Auto_Manual = -1;
+    autoChainMode = 0;
+    jogCommand = 0;
+
+    server.send(200, "application/json", "{\"status\":\"return_to_home_started\"}");
+    Serial.println("HOMING: Return to home started");
+  }
+  else {
+    server.send(400, "application/json", "{\"error\":\"action must be home or return\"}");
+  }
+}
+
+// STATUS Handler
+void handleStatus_Unified() {
+  // JSON Document là biến toàn cục, có thể bị ghi đè khi có nhiều client cùng gọi.
+  // Do đó dùng jsonDocument.clear() để tránh bị ghi đè, nhưng nếu dùng jsonDocument.clear()
+  // nếu giả sử handleAutoChain_Unified đang phân tích chuỗi,
+  // thì khi vừa gọi handleStatus_Unified, nó sẽ clear hết JSON Document đang dùng cho các tác vụ (POST,GET) khác.
+  // ====> làm sai lệch dữ liệu.
+  // Do đó dùng statusDoc là biến cục bộ trong hàm, ghi độc lập với tác vụ POST khác.
+  StaticJsonDocument<512> statusDoc;
+
+  // Nạp dữ liệu vào tài liệu (an toàn)
+  statusDoc["auto_manual"] = Auto_Manual;
+  statusDoc["jog_command"] = jogCommand;
+  statusDoc["auto_chain_mode"] = autoChainMode;
+  statusDoc["auto_chain_step"] = autoChainStep;
+  statusDoc["total_steps"] = TotalStep;
+  statusDoc["position_X"] = Axis_Base.currentPosition();
+  statusDoc["position_Y"] = Axis_Shoulder.currentPosition();
+  statusDoc["position_Z"] = Axis_Elbow.currentPosition();
+  statusDoc["position_T"] = readEncoderCount();
+
+  // Thêm thông tin về số lượng và kích thước vật
+  statusDoc["object_count_small"] = Number_of_Objects_small;
+  statusDoc["object_count_medium"] = Number_of_Objects_medium;
+  statusDoc["object_count_large"] = Number_of_Objects_large;
+  statusDoc["object_size"] = Object_Size;
+
+  char statusBuffer[512];
+  
+  // Chuyển đổi tài liệu thành chuỗi JSON
+  // Dùng sizeof(statusBuffer) để đảm bảo không bị tràn bộ đệm
+  serializeJson(statusDoc, statusBuffer, sizeof(statusBuffer));
+  
+  server.send(200, "application/json", statusBuffer);
+}
+
+// Setup Web Server
+void setup_webserver() {
+  server.on("/command", HTTP_POST, handleUnifiedCommand);
+  server.on("/status", HTTP_GET, handleStatus_Unified);
+  server.begin();
+  Serial.println("Web server started on /command and /status");
+}
+
+// ====== WiFi setup helper ======
+void setupWiFi() {
+  Serial.println("Connecting to Wi-Fi...");
+  WiFi.begin(SSID, PWD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+
+  Serial.println("\nConnected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+}
+
+// ====== Khởi tạo các task ======
 
 // ====== Hàm setup ======
 void setup()
@@ -459,6 +790,8 @@ void setup()
   SetHomeAll();
 
   setup_task();
+  setupWiFi();
+  setup_webserver(); // Khởi tạo web server
 
   Serial.println("Robot da san sang.");
   Serial.println("Chuyen sang che do AUTO (0).");
@@ -467,5 +800,6 @@ void setup()
 // ====== Hàm loop ======
 void loop()
 {
-  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  server.handleClient(); // Xử lý client requests
+  // vTaskDelay(1 / portTICK_PERIOD_MS);
 }
