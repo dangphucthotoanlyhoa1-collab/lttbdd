@@ -4,6 +4,110 @@
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
 
+/*
+===========Dạng Chuỗi JSON tổng quát cho tất cả tác vụ========================
+form POST jog:
+Task: Jog,
+conmmand_jog: 1,
+
+form POST autochain/classify:
+Task: Autochain|Classify,
+TotalSteps: 2,
+Coordinates_auto|classify: [ {X:0, Y:0, Z:0, T:0, speed_X:800, speed_Y:800, speed_Z:800, speed_T:100}, {...}, ... ]
+
+form POST SetHome:
+Task: SetHome,
+
+form POST ReturnHome:
+Task: ReturnHome,
+
+form POST Stop:
+Task: Stop,
+
+
+  "task": "Jog|Autochain|Classify|SetHome|ReturnHome|Stop", //mode   3= Stop, -2=SetHome ,-1=ReturnHome, 0=Jog, 1=Autochain, 2=Classify
+  // Ở task SetHome, cho mode = -2 và gọi hàm SetHomeAll()
+  // Ở task ReturnHome, cho mode = -1 và gọi hàm ReturnToHome()
+  // Ở task Stop, cho mode = -3 để dừng tất cả các hoạt động.
+  // Ở task JOG, cho mode = 0 và sử dụng trường "command_jog" để điều khiển
+  // Ở task Autochain, cho mode = 1 và sử dụng trường "Coordinates_auto" để đưa dữ liệu vào XYZT_Coordinates Moving_Coordinates
+  // Ở task Classify, cho mode = 2 và sử dụng trường "Coordinates_classify" để đưa dữ liệu vào XYZT_Coordinates Classify
+  // Ở task Status, không cần trường nào khác ngoài "task", lấy trạng thái hiện tại của robot.
+  // Ở trường TotalSteps, chỉ sử dụng trong Autochain để xác định số bước trong chuỗi, nó sẽ gán cho autoChainStep
+  // === JOG (Manual mode) ===
+  "command_jog": 1,
+  // === AUTOCHAIN (Auto mode) ===
+  "TotalSteps": 2,
+  "Coordinates_auto": [
+    {
+      "X": 0,
+      "Y": 0,
+      "Z": 0,
+      "T": 0,
+      "speed_X": 800,
+      "speed_Y": 800,
+      "speed_Z": 800,
+      "speed_T": 100
+    },
+    {
+      "X": 1000,
+      "Y": 500,
+      "Z": 300,
+      "T": 100,
+      "speed_X": 600,
+      "speed_Y": 600,
+      "speed_Z": 600,
+      "speed_T": 150
+    }
+  ],
+  "Coordinates_classify": [
+    {
+      "X": 0,
+      "Y": 0,
+      "Z": 0,
+      "T": 0,
+      "speed_X": 800,
+      "speed_Y": 800,
+      "speed_Z": 800,
+      "speed_T": 100
+    },
+    {
+      "X": 1000,
+      "Y": 500,
+      "Z": 300,
+      "T": 100,
+      "speed_X": 600,
+      "speed_Y": 600,
+      "speed_Z": 600,
+      "speed_T": 150
+    },
+    {
+      "X": 1000,
+      "Y": 500,
+      "Z": 300,
+      "T": 100,
+      "speed_X": 600,
+      "speed_Y": 600,
+      "speed_Z": 600,
+      "speed_T": 150
+    },
+    {
+      "X": 1000,
+      "Y": 500,
+      "Z": 300,
+      "T": 100,
+      "speed_X": 600,
+      "speed_Y": 600,
+      "speed_Z": 600,
+      "speed_T": 150
+    }
+  ],
+}
+
+Không phải tất cả các trường trong JSON đều bắt buộc trong mỗi tác vụ. Nó chỉ là 1 JSON tổng quát để cho việc quản lý
+trở nên dễ dàng và đồng bộ.
+
+*/
 // Function prototypes
 void IRAM_ATTR onEncoderPulse();                                // intererupt handler for encoder
 long readEncoderCount();                                        // read encoder count safely
@@ -16,6 +120,8 @@ void MoveJog(void *parameter);                                  // JOG movement 
 void motor_task_AUTO(void *parameter);                          // AUTO and classify movement task
 void setup_task();                                              // initialize RTOS tasks
 void setup_webserver();                                         // initialize web server
+void handleUnifiedCommand();                                    // POST: handle all incoming commands
+void UpdateCurrentPosition();                                   // GET: update current position
 
 //========== Khai báo cấu trúc tọa độ XYZT và Tốc độ chuyển động ======
 typedef struct
@@ -32,7 +138,7 @@ typedef struct
 } XYZT_Coordinates;
 
 XYZT_Coordinates Moving_Coordinates[1000];
-XYZT_Coordinates Classify[1000];
+XYZT_Coordinates Classify[7];
 XYZT_Coordinates CurrentPosition;
 
 //========== Khai báo Web Server và JSON Document ======
@@ -61,13 +167,12 @@ const int LIM_SHOULDER_PIN = 13; // chỉnh theo phần cứng
 const int LIM_ELBOW_PIN = 23;    // chỉnh theo phần cứng
 
 // ====== Các biến điều khiển robot (State Machine) ======
-volatile int command_jog = 0;       // 0=STOP, 1=Base+, 2=Base-, 3=Shoulder+, 4=Shoulder-, 5=Elbow+, 6=Elbow-
+volatile int command_jog = 0;      // 0=STOP, 1=Base+, 2=Base-, 3=Shoulder+, 4=Shoulder-, 5=Elbow+, 6=Elbow-
 const float JOG_SPEED = 600.0;     // Vận tốc cố định 600
 volatile int Mode = -3;            // -3= Stop, -2= SetHome ,-1=ReturnHome, 0=jog, 1=chain, 2=classify
 volatile int autoChainStep = 0;    // bước hiện tại trong chuỗi
 volatile int autoClassifyStep = 0; // bước hiện tại trong phân loại
-int TotalSteps = 0;                 // Số bước chạy auto (sẽ được cập nhật khi nhận lệnh từ web)
-int TotalStep = 0;                  // legacy alias (some older code refers to TotalStep)
+int TotalSteps = 0;                // Số bước chạy auto (sẽ được cập nhật khi nhận lệnh từ web)
 
 //=======Biến điều khiển encoder gripper ======
 const int ENCODER_PIN = 35; // Chân đọc encoder
@@ -86,7 +191,27 @@ int Object_Medium_size = 4;
 int Number_of_Objects_small = 0;
 int Number_of_Objects_medium = 0;
 int Number_of_Objects_large = 0;
+int Flag_Object_size = 0; // 1: vật nhỏ , 2: vật vừa, 3: vật lớn
 
+// Biến tạm cho hàm DetachObject
+long time_now = 0;
+long value_now = 0;
+long time_last = 0;
+long value_last = 0;
+int HasConsitancy = 0;
+
+// Biến cho Gripper ở Jog mode
+int Axis_Gripper_setSpeed = 0;
+int direction_Gripper_Jog = -1;
+
+// Biến cho Gripper ở Auto mode
+int Axis_Gripper_Speed = 0;
+int Axis_Gripper_Next_Position = 0;
+
+// Biến cho Classify mode
+int Axis_Gripper_Stop = 0;
+int Detach_object_flag = 0;
+int Disable_Axis_Gripper = 0;
 //================================================================================//
 //================================================================================//
 //===================== các tác vụ điều khiển robot ==============================//
@@ -133,12 +258,6 @@ void MoveAxisGripper(int direction, int speed)
   }
 }
 
-long time_now = 0;
-long value_now = 0;
-long time_last = 0;
-long value_last = 0;
-int HasConsitancy = 0;
-
 int DetachObject()
 {
   time_now = millis();
@@ -159,14 +278,17 @@ int DetachObject()
       if (Object_Size < Object_Small_size)
       {
         Number_of_Objects_small++;
+        Flag_Object_size = 1;
       }
       else if (Object_Size < Object_Medium_size)
       {
         Number_of_Objects_medium++;
+        Flag_Object_size = 2;
       }
       else
       {
         Number_of_Objects_large++;
+        Flag_Object_size = 3;
       }
       time_now = 0;
       value_now = 0;
@@ -252,6 +374,7 @@ void SetHomeAll()
       if (HomingBase && HomingShoulder && HomingElbow && HomingGripper)
       {
         Serial.println("Homing completed!");
+        Mode = -3; // set to Stop after homing
         return;
       }
     }
@@ -262,33 +385,42 @@ void SetHomeAll()
 //===== Hàm trở về vị trí home (NON-BLOCKING) ======
 void ReturnToHome(void *parameter)
 {
-  if (Mode == -1)
+  while (1)
   {
-    while (Axis_Base.distanceToGo() == 0 &&
-           Axis_Shoulder.distanceToGo() == 0 &&
-           Axis_Elbow.distanceToGo() == 0 &&
-           g_encoderCount == 0) // reset encoder count
+    if (Mode == -1)
     {
-      Axis_Base.setMaxSpeed(600);
-      Axis_Shoulder.setMaxSpeed(600);
-      Axis_Elbow.setMaxSpeed(600);
+      if (Axis_Base.distanceToGo() == 0 &&
+          Axis_Shoulder.distanceToGo() == 0 &&
+          Axis_Elbow.distanceToGo() == 0 &&
+          g_encoderCount == 0) // reset encoder count
+      {
+        Axis_Base.setMaxSpeed(600);
+        Axis_Shoulder.setMaxSpeed(600);
+        Axis_Elbow.setMaxSpeed(600);
 
-      Axis_Base.moveTo(0);
-      Axis_Shoulder.moveTo(0);
-      Axis_Elbow.moveTo(0);
-      MoveAxisGripper(0, 220); // đóng càng với tốc độ 220
+        Axis_Base.moveTo(0);
+        Axis_Shoulder.moveTo(0);
+        Axis_Elbow.moveTo(0);
+        MoveAxisGripper(0, 220); // đóng càng với tốc độ 220
 
-      Axis_Base.run();
-      Axis_Shoulder.run();
-      Axis_Elbow.run();
+        Axis_Base.run();
+        Axis_Shoulder.run();
+        Axis_Elbow.run();
 
-      vTaskDelay(20 / portTICK_PERIOD_MS);
+        vTaskDelay(20 / portTICK_PERIOD_MS);
+      }
+      else
+      {
+        Mode = -3; // set to Stop after returning home
+      }
+    }
+    else
+    {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
     }
   }
 }
 
-int Axis_Gripper_setSpeed = 0;
-int direction_Gripper_Jog = -1;
 // ====== Move Jog Task (Chế độ JOG) ======
 void MoveJog(void *parameter)
 {
@@ -336,20 +468,21 @@ void MoveJog(void *parameter)
       Axis_Shoulder.runSpeed();
       Axis_Elbow.runSpeed();
       MoveAxisGripper(direction_Gripper_Jog, Axis_Gripper_setSpeed);
+      vTaskDelay(1 / portTICK_PERIOD_MS);
     }
-    vTaskDelay(1 / portTICK_PERIOD_MS);
+    else
+    {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
   }
 }
 
-int Direction_Gripper = 0;
-int Axis_Gripper_Speed = 0;
-int Axis_Gripper_Next_Position = 0;
 //====== (SỬA LẠI HOÀN TOÀN) Task chạy chế độ AUTO (Đồng bộ Stepper + Gripper) ======
 void motor_task_AUTO(void *parameter)
 {
   while (1)
   {
-    if (Mode == 2)
+    if (Mode == 1)
     { // Chỉ chạy khi ở chế độ AUTO
       // Chạy chuỗi tự động
       // Kiểm tra xem 3 trục đã dừng lại (hoàn thành bước) chưa
@@ -364,7 +497,7 @@ void motor_task_AUTO(void *parameter)
         Serial.println(autoChainStep);
         autoChainStep++; // Chuyển sang bước tiếp theo
 
-        if (autoChainStep > TotalStep)
+        if (autoChainStep > TotalSteps)
         {
           autoChainStep = 0;
         }
@@ -410,15 +543,29 @@ void motor_task_AUTO(void *parameter)
       }
       vTaskDelay(10 / portTICK_PERIOD_MS);
     }
+    else
+    {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
   }
 }
 
 //===================== Task chạy chế độ CLASSIFY =========================
-int Axis_Gripper_Stop = 0;
-int Detach_object_flag = 0;
-int Disable_Axis_Gripper = 0;
+/*
+Classify[0] = {X: vật, Y: vật, Z: vật, T: mở càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:255} // sẽ cộng Y thêm 400 để tránh va chạm
+Classify[1] = {X: vật, Y: vật, Z: vật, T: mở càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:255}
+Classify[2] = {X: vật, Y: vật, Z: vật, T: đóng càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:255} // bước kẹp vật
+Classify[3] = {X: vật, Y: vật, Z: vật, T: đóng càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:torque}  //cộng Y thêm 400 để tránh va chạm
+Classify[4] = {X: vị trí thả nhỏ, Y: vị trí thả nhỏ, Z: vị trí thả nhỏ, T: đóng càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:torque} //cộng Y thêm 400 để tránh va chạm
+Classify[5] = {X: vị trí thả vừa, Y: vị trí thả vừa, Z: vị trí thả vừa, T: đóng càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:torque} //cộng Y thêm 400 để tránh va chạm
+Classify[6] = {X: vị trí thả lớn, Y: vị trí thả lớn, Z: vị trí thả lớn, T: đóng càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:torque} //cộng Y thêm 400 để tránh va chạm
+Classify[7] = {X: thùng, Y: thùng, Z: thùng, T: mở càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:255}
+*/
+
 void motor_task_Classify(void *parameter)
 {
+  int MoveToStep_7 = 0;
+
   while (1)
   {
     if (Mode == 2)
@@ -430,15 +577,43 @@ void motor_task_Classify(void *parameter)
       {
         autoClassifyStep++;
         Axis_Gripper_Stop = 0; // Chuyển sang bước tiếp theo
-        if (autoClassifyStep == 6)
+        if (MoveToStep_7 == 1)
         {
-          disable_Axis_Gripper = 0;
+          autoClassifyStep = 7;
+          MoveToStep_7 = 0;
+        }
+        if (autoClassifyStep == 4)
+        {
+          switch (Flag_Object_size)
+          {
+          case 1:
+            autoClassifyStep = 4;
+            MoveToStep_7 = 1;
+            Flag_Object_size = 0;
+            break;
+          case 2:
+            autoClassifyStep = 5;
+            MoveToStep_7 = 1;
+            Flag_Object_size = 0;
+            break;
+          case 3:
+            autoClassifyStep = 6;
+            Flag_Object_size = 0;
+            break;
+          default:
+            break;
+          }
+        }
+        if (autoClassifyStep == 7)
+        {
+          Disable_Axis_Gripper = 0;
           Axis_Gripper_Stop = 0;
           Detach_object_flag = 0;
         }
-        if (autoClassifyStep > 6)
+        if (autoClassifyStep > 7)
         {
           autoClassifyStep = 0;
+          MoveToStep_7 = 0;
         }
       }
 
@@ -451,51 +626,54 @@ void motor_task_Classify(void *parameter)
       Axis_Shoulder.moveTo(Moving_Coordinates[autoClassifyStep].Y);
       Axis_Elbow.moveTo(Moving_Coordinates[autoClassifyStep].Z);
       Axis_Gripper_Next_Position = Moving_Coordinates[autoClassifyStep].T;
-    }
 
-    if (Axis_Gripper_Next_Position > g_encoderCount)
-    {
-      Direction_Gripper = 1; // mở càng
-    }
-    else if (Axis_Gripper_Next_Position < g_encoderCount)
-    {
-      Direction_Gripper = 0; // đóng càng
-    }
-    else
-    {
-      Direction_Gripper = -1; // dừng
-    }
-
-    Axis_Base.run();
-    Axis_Shoulder.run();
-    Axis_Elbow.run();
-    if (autoClassifyStep == 3)
-    {
-      Detach_object_flag = DetachObject(); // lên 1 trong 1 chu kỳ quét
-    }
-    if (disable_Axis_Gripper == 0)
-    {
-      if (Detach_object_flag == 0)
+      if (Axis_Gripper_Next_Position > g_encoderCount)
       {
-        if (g_encoderCount != Axis_Gripper_Next_Position)
-        {
-          MoveAxisGripper(Direction_Gripper, Axis_Gripper_Speed);
-        }
-        if (g_encoderCount == Axis_Gripper_Next_Position)
-        {
-          MoveAxisGripper(-1, 0); // dừng càng
-          Axis_Gripper_Stop = 1;
-        }
+        Direction_Gripper = 1; // mở càng
+      }
+      else if (Axis_Gripper_Next_Position < g_encoderCount)
+      {
+        Direction_Gripper = 0; // đóng càng
       }
       else
       {
-        Axis_Gripper_Stop = 1;
-        MoveAxisGripper(Direction_Gripper, torque); // giữ lực kẹp
-        disable_Axis_Gripper = 1;
+        Direction_Gripper = -1; // dừng
       }
-    }
 
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+      Axis_Base.run();
+      Axis_Shoulder.run();
+      Axis_Elbow.run();
+      if (autoClassifyStep == 2)
+      {
+        Detach_object_flag = DetachObject(); // lên 1 trong 1 chu kỳ quét
+      }
+      if (Disable_Axis_Gripper == 0)
+      {
+        if (Detach_object_flag == 0)
+        {
+          if (g_encoderCount != Axis_Gripper_Next_Position)
+          {
+            MoveAxisGripper(Direction_Gripper, Axis_Gripper_Speed);
+          }
+          if (g_encoderCount == Axis_Gripper_Next_Position)
+          {
+            MoveAxisGripper(-1, 0); // dừng càng
+            Axis_Gripper_Stop = 1;
+          }
+        }
+        else // đã kẹp vật
+        {
+          Axis_Gripper_Stop = 1;
+          MoveAxisGripper(Direction_Gripper, torque); // giữ lực kẹp
+          Disable_Axis_Gripper = 1;
+        }
+      }
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    else
+    {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
   }
 }
 
@@ -522,38 +700,47 @@ void UpdateCurrentPosition()
   CurrentPosition.Speed_Z = Axis_Elbow.speed();
 }
 
-void handleUnifiedCommand() {
-  if (!server.hasArg("plain")) {
+void handleUnifiedCommand()
+{
+  if (!server.hasArg("plain"))
+  {
     server.send(400, "application/json", "{\"error\":\"No data\"}");
     return;
   }
-  
+
   String body = server.arg("plain");
   deserializeJson(jsonDocument, body);
-  
+
   String task = jsonDocument["task"];
-  Serial.print("Web Command: "); Serial.println(task);
+  Serial.print("Web Command: ");
+  Serial.println(task);
 
   // --- STOP ---
-  if (task == "Stop") {
+  if (task == "Stop")
+  {
     Mode = -3; // Stop tất cả
-    Axis_Base.stop(); Axis_Shoulder.stop(); Axis_Elbow.stop();
+    Axis_Base.stop();
+    Axis_Shoulder.stop();
+    Axis_Elbow.stop();
     MoveAxisGripper(-1, 0);
     server.send(200, "application/json", "{\"status\":\"Stopped\"}");
   }
   // --- JOG ---
-  else if (task == "Jog") {
+  else if (task == "Jog")
+  {
     Mode = 0;
     command_jog = jsonDocument["command_jog"];
     server.send(200, "application/json", "{\"status\":\"Jogging\"}");
   }
   // --- AUTO CHAIN ---
-  else if (task == "Autochain") {
+  else if (task == "Autochain")
+  {
     Mode = -2; // Stop trước khi nạp
     TotalSteps = jsonDocument["TotalSteps"];
     JsonArray coords = jsonDocument["Coordinates_auto"];
-    
-    for(int i=0; i<TotalSteps; i++) {
+
+    for (int i = 0; i < TotalSteps; i++)
+    {
       Moving_Coordinates[i].X = coords[i]["X"];
       Moving_Coordinates[i].Y = coords[i]["Y"];
       Moving_Coordinates[i].Z = coords[i]["Z"];
@@ -568,12 +755,13 @@ void handleUnifiedCommand() {
     server.send(200, "application/json", "{\"status\":\"Auto Started\"}");
   }
   // --- CLASSIFY ---
-  else if (task == "Classify") {
-    Mode = -2;
-    TotalSteps = jsonDocument["TotalSteps"];
+  else if (task == "Classify")
+  {
+    Mode = -3; // Stop trước khi nạp
     JsonArray coords = jsonDocument["Coordinates_classify"];
-    
-    for(int i=0; i<TotalSteps; i++) {
+
+    for (int i = 0; i < 6; i++)
+    {
       Classify[i].X = coords[i]["X"];
       Classify[i].Y = coords[i]["Y"];
       Classify[i].Z = coords[i]["Z"];
@@ -583,11 +771,27 @@ void handleUnifiedCommand() {
       Classify[i].Speed_Z = coords[i]["speed_Z"];
       Classify[i].Speed_T = coords[i]["speed_T"];
     }
-    currentStep = 0;
+    Classify[0].Y = Classify[0].Y + 400;
+    Classify[4].Y = Classify[4].Y + 400;
+    Classify[5].Y = Classify[5].Y + 400;
+    Classify[6].Y = Classify[6].Y + 400;
+    autoClassifyStep = 0;
     Mode = 2; // Start Classify
     server.send(200, "application/json", "{\"status\":\"Classify Started\"}");
   }
-  else {
+  else if (task == "SetHome")
+  {
+    Mode = -2; // Start Homing
+    SetHomeAll();
+    server.send(200, "application/json", "{\"status\":\"Homing Started\"}");
+  }
+  else if (task == "ReturnHome")
+  {
+    Mode = -1; // Start Return Home
+    server.send(200, "application/json", "{\"status\":\"Returning Home\"}");
+  }
+  else
+  {
     server.send(400, "application/json", "{\"error\":\"Unknown task\"}");
   }
 }
@@ -596,7 +800,7 @@ void handleUnifiedCommand() {
 void setup_webserver()
 {
   server.on("/command", HTTP_POST, handleUnifiedCommand);
-  server.on("/status", HTTP_GET, handleStatus_Unified);
+  // server.on("/status", HTTP_GET, handleStatus_Unified);
   server.on("/current_position", HTTP_GET, UpdateCurrentPosition);
   server.begin();
   Serial.println("Web server started on /command and /status");
