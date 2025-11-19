@@ -111,6 +111,7 @@ trở nên dễ dàng và đồng bộ.
 // Function prototypes
 void IRAM_ATTR onEncoderPulse();                                // intererupt handler for encoder
 long readEncoderCount();                                        // read encoder count safely
+void resetEncoderCount();                                    // reset encoder count
 void MoveAxisGripper(int direction, int speed);                 // direction: 0=close, 1=open, -1=stop
 int DetachObject();                                             // detect if object is gripped and measure size
 int homeAxis(AccelStepper &axis, int limPin, const char *name); // homing for one axis
@@ -122,6 +123,8 @@ void setup_task();                                              // initialize RT
 void setup_webserver();                                         // initialize web server
 void handleUnifiedCommand();                                    // POST: handle all incoming commands
 void UpdateCurrentPosition();                                   // GET: update current position
+
+portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED; // encoder priority access mutex
 
 //========== Khai báo cấu trúc tọa độ XYZT và Tốc độ chuyển động ======
 typedef struct
@@ -229,10 +232,16 @@ void IRAM_ATTR onEncoderPulse()
 long readEncoderCount()
 {
   long count_copy;
-  noInterrupts();              // TẮT ngắt
+  portENTER_CRITICAL(&mux);             // TẮT ngắt
   count_copy = g_encoderCount; // Sao chép giá trị
-  interrupts();                // BẬT ngắt lại ngay
+  portEXIT_CRITICAL(&mux);                // BẬT ngắt lại ngay
   return count_copy;
+}
+
+void resetEncoderCount() {
+  portENTER_CRITICAL(&mux);
+  g_encoderCount = 0;
+  portEXIT_CRITICAL(&mux);
 }
 
 // (SỬA) Sửa hàm MoveAxisGripper để dùng KÊNH (Channel)
@@ -355,6 +364,7 @@ void SetHomeAll()
   int time_out = 0;
   while (time_out < 20000)
   { // timeout 20s
+    long Encoder_Position = readEncoderCount(); // đọc vị trí encoder gripper
     if (Mode == -2)
     {
 
@@ -369,7 +379,7 @@ void SetHomeAll()
       if (HomingGripper == 1)
       {
         MoveAxisGripper(-1, 0); // dừng càng
-        g_encoderCount = 0;     // reset encoder count
+        resetEncoderCount();    // reset encoder count
       }
       if (HomingBase && HomingShoulder && HomingElbow && HomingGripper)
       {
@@ -389,10 +399,11 @@ void ReturnToHome(void *parameter)
   {
     if (Mode == -1)
     {
+      long Encoder_Position = readEncoderCount();
       if (Axis_Base.distanceToGo() == 0 &&
           Axis_Shoulder.distanceToGo() == 0 &&
           Axis_Elbow.distanceToGo() == 0 &&
-          g_encoderCount == 0) // reset encoder count
+          Encoder_Position == 0) // reset encoder count
       {
         Axis_Base.setMaxSpeed(600);
         Axis_Shoulder.setMaxSpeed(600);
@@ -483,13 +494,15 @@ void motor_task_AUTO(void *parameter)
   while (1)
   {
     if (Mode == 1)
-    { // Chỉ chạy khi ở chế độ AUTO
+    { 
+      long Encoder_Position = readEncoderCount();
+      // Chỉ chạy khi ở chế độ AUTO
       // Chạy chuỗi tự động
       // Kiểm tra xem 3 trục đã dừng lại (hoàn thành bước) chưa
       if (Axis_Base.distanceToGo() == 0 &&
           Axis_Shoulder.distanceToGo() == 0 &&
           Axis_Elbow.distanceToGo() == 0 &&
-          g_encoderCount == Axis_Gripper_Next_Position)
+          abs(Encoder_Position - Axis_Gripper_Next_Position) <= 5)
       {
         // và kẹp đã dừng{
         // Đã hoàn thành bước autoChainStep
@@ -514,12 +527,12 @@ void motor_task_AUTO(void *parameter)
       Axis_Gripper_Next_Position = Moving_Coordinates[autoChainStep].T;
 
       // Đặt mục tiêu MỚI
-
-      if (Axis_Gripper_Next_Position > g_encoderCount)
+      Encoder_Position = readEncoderCount();
+      if (Axis_Gripper_Next_Position > Encoder_Position)
       {
         Direction_Gripper = 1; // mở càng
       }
-      else if (Axis_Gripper_Next_Position < g_encoderCount)
+      else if (Axis_Gripper_Next_Position < Encoder_Position)
       {
         Direction_Gripper = 0; // đóng càng
       }
@@ -532,7 +545,8 @@ void motor_task_AUTO(void *parameter)
       Axis_Shoulder.run();
       Axis_Elbow.run();
 
-      if (g_encoderCount != Axis_Gripper_Next_Position)
+      Encoder_Position = readEncoderCount();
+      if (Encoder_Position != Axis_Gripper_Next_Position)
       {
         MoveAxisGripper(Direction_Gripper, Axis_Gripper_Speed);
       }
@@ -570,6 +584,7 @@ void motor_task_Classify(void *parameter)
   {
     if (Mode == 2)
     {
+      long Encoder_Position = readEncoderCount();
       if (Axis_Base.distanceToGo() == 0 &&
           Axis_Shoulder.distanceToGo() == 0 &&
           Axis_Elbow.distanceToGo() == 0 &&
@@ -627,11 +642,12 @@ void motor_task_Classify(void *parameter)
       Axis_Elbow.moveTo(Moving_Coordinates[autoClassifyStep].Z);
       Axis_Gripper_Next_Position = Moving_Coordinates[autoClassifyStep].T;
 
-      if (Axis_Gripper_Next_Position > g_encoderCount)
+      Encoder_Position = readEncoderCount();
+      if (Axis_Gripper_Next_Position > Encoder_Position)
       {
         Direction_Gripper = 1; // mở càng
       }
-      else if (Axis_Gripper_Next_Position < g_encoderCount)
+      else if (Axis_Gripper_Next_Position < Encoder_Position)
       {
         Direction_Gripper = 0; // đóng càng
       }
@@ -651,11 +667,12 @@ void motor_task_Classify(void *parameter)
       {
         if (Detach_object_flag == 0)
         {
-          if (g_encoderCount != Axis_Gripper_Next_Position)
+          Encoder_Position = readEncoderCount();
+          if (Encoder_Position != Axis_Gripper_Next_Position)
           {
             MoveAxisGripper(Direction_Gripper, Axis_Gripper_Speed);
           }
-          if (g_encoderCount == Axis_Gripper_Next_Position)
+          if (abs(Encoder_Position - Axis_Gripper_Next_Position) <= 5)
           {
             MoveAxisGripper(-1, 0); // dừng càng
             Axis_Gripper_Stop = 1;
@@ -694,7 +711,8 @@ void UpdateCurrentPosition()
   CurrentPosition.X = Axis_Base.currentPosition();
   CurrentPosition.Y = Axis_Shoulder.currentPosition();
   CurrentPosition.Z = Axis_Elbow.currentPosition();
-  CurrentPosition.T = g_encoderCount;
+  long encoderPos = readEncoderCount();
+  CurrentPosition.T = encoderPos;
   CurrentPosition.Speed_X = Axis_Base.speed();
   CurrentPosition.Speed_Y = Axis_Shoulder.speed();
   CurrentPosition.Speed_Z = Axis_Elbow.speed();
