@@ -5,8 +5,26 @@
 #include <AccelStepper.h>
 /*
 ===========Dạng Chuỗi JSON tổng quát cho tất cả tác vụ========================
-{
-  "task": "Jog|Autochain|Classify|SetHome|ReturnHome|Status|Stop", //-2= Stop, -1=ReturnHome, 0=Jog, 1=Autochain, 2=Classify 
+form POST jog:
+Task: Jog,
+conmmand_jog: 1,
+
+form POST autochain/classify:
+Task: Autochain|Classify,
+TotalSteps: 2,
+Coordinates_auto|classify: [ {X:0, Y:0, Z:0, T:0, speed_X:800, speed_Y:800, speed_Z:800, speed_T:100}, {...}, ... ]
+
+form POST SetHome:
+Task: SetHome,
+
+form POST ReturnHome:
+Task: ReturnHome,
+
+form POST Stop:
+Task: Stop,
+
+
+  "task": "Jog|Autochain|Classify|SetHome|ReturnHome|Stop", //mode   3= Stop, -2=SetHome ,-1=ReturnHome, 0=Jog, 1=Autochain, 2=Classify 
   // Ở task SetHome, cho mode = -2 và gọi hàm SetHomeAll()
   // Ở task ReturnHome, cho mode = -1 và gọi hàm ReturnToHome()
   // Ở task Stop, cho mode = -2 để dừng tất cả các hoạt động.
