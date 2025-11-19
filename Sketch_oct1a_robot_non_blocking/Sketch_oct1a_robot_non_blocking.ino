@@ -153,9 +153,9 @@ const char *PWD = "ThanhgiA1931";
 
 //========== Khai báo các đối tượng stepper motor ======
 AccelStepper Axis_Base(AccelStepper::DRIVER, 26, 27);     // Step, Dir
-AccelStepper Axis_Shoulder(AccelStepper::DRIVER, 14, 12); // Step, Dir
-AccelStepper Axis_Elbow(AccelStepper::DRIVER, 25, 33);    // Step, Dir
-#define Axis_Gripper_forward_PIN 3                        // kẹp lại
+AccelStepper Axis_Shoulder(AccelStepper::DRIVER, 32, 33); // Step, Dir
+AccelStepper Axis_Elbow(AccelStepper::DRIVER, 25, 21);    // Step, Dir
+#define Axis_Gripper_forward_PIN 16                        // kẹp lại
 #define Axis_Gripper_backward_PIN 4                       // mở ra
 volatile int Direction_Gripper = 0;                       // Hướng kẹp vật: 0= đóng càng, 1= mở càng
 // (XÓA) 2 biến tốc độ này, chúng ta sẽ đọc từ mảng
@@ -165,9 +165,9 @@ volatile int Direction_Gripper = 0;                       // Hướng kẹp vậ
 //========== Khai báo các biến toàn cục ======
 
 // ====== Chân công tắc hành trình ======
-const int LIM_BASE_PIN = 15;     // chỉnh theo phần cứng
-const int LIM_SHOULDER_PIN = 13; // chỉnh theo phần cứng
-const int LIM_ELBOW_PIN = 23;    // chỉnh theo phần cứng
+const int LIM_BASE_PIN = 13;     // chỉnh theo phần cứng
+const int LIM_SHOULDER_PIN = 23; // chỉnh theo phần cứng
+const int LIM_ELBOW_PIN = 19;    // chỉnh theo phần cứng
 
 // ====== Các biến điều khiển robot (State Machine) ======
 volatile int command_jog = 0;      // 0=STOP, 1=Base+, 2=Base-, 3=Shoulder+, 4=Shoulder-, 5=Elbow+, 6=Elbow-
@@ -178,7 +178,7 @@ volatile int autoClassifyStep = 0; // bước hiện tại trong phân loại
 int TotalSteps = 0;                // Số bước chạy auto (sẽ được cập nhật khi nhận lệnh từ web)
 
 //=======Biến điều khiển encoder gripper ======
-const int ENCODER_PIN = 35; // Chân đọc encoder
+const int ENCODER_PIN = 18; // Chân đọc encoder
 volatile long g_encoderCount = 0;
 volatile float Object_Size = 0.0;        // Kích thước vật cầm nắm (cm)
 const float GRIPPER_PULSES_PER_CM = 0.1; // Số xung encoder trên mỗi mm di chuyển của gripper
