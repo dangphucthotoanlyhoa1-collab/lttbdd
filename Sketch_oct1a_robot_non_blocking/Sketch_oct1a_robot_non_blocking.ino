@@ -15,7 +15,7 @@ void ReturnToHome(void *parameter);                             // non-blocking 
 void MoveJog(void *parameter);                                  // JOG movement task
 void motor_task_AUTO(void *parameter);                          // AUTO and classify movement task
 void setup_task();                                              // initialize RTOS tasks
-void setup_webserver();                                        // initialize web server
+void setup_webserver();                                         // initialize web server
 
 //========== Khai báo cấu trúc tọa độ XYZT và Tốc độ chuyển động ======
 typedef struct
@@ -33,6 +33,7 @@ typedef struct
 
 XYZT_Coordinates Moving_Coordinates[1000];
 XYZT_Coordinates Classify[1000];
+XYZT_Coordinates CurrentPosition;
 
 //========== Khai báo Web Server và JSON Document ======
 WebServer server(80);
@@ -60,9 +61,9 @@ const int LIM_SHOULDER_PIN = 13; // chỉnh theo phần cứng
 const int LIM_ELBOW_PIN = 23;    // chỉnh theo phần cứng
 
 // ====== Các biến điều khiển robot (State Machine) ======
-volatile int jogCommand = 0;       // 0=STOP, 1=Base+, 2=Base-, 3=Shoulder+, 4=Shoulder-, 5=Elbow+, 6=Elbow-
+volatile int command_jog = 0;       // 0=STOP, 1=Base+, 2=Base-, 3=Shoulder+, 4=Shoulder-, 5=Elbow+, 6=Elbow-
 const float JOG_SPEED = 600.0;     // Vận tốc cố định 600
-volatile int Mode = -2;            // -2= Stop, -1=homing, 0=jog, 1=chain, 2=classify
+volatile int Mode = -3;            // -3= Stop, -2= SetHome ,-1=ReturnHome, 0=jog, 1=chain, 2=classify
 volatile int autoChainStep = 0;    // bước hiện tại trong chuỗi
 volatile int autoClassifyStep = 0; // bước hiện tại trong phân loại
 int TotalSteps = 0;                 // Số bước chạy auto (sẽ được cập nhật khi nhận lệnh từ web)
@@ -181,7 +182,7 @@ int DetachObject()
 // Hàm homing cho 1 trục (blocking)
 int homeAxis(AccelStepper &axis, int limPin, const char *name)
 {
-  if (Mode == -1)
+  if (Mode == -2)
   {
     const float fastSpeed = -800;
     const float slowSpeed = -400;
@@ -232,7 +233,7 @@ void SetHomeAll()
   int time_out = 0;
   while (time_out < 20000)
   { // timeout 20s
-    if (Mode == -1)
+    if (Mode == -2)
     {
 
       time_out = millis();
@@ -301,7 +302,7 @@ void MoveJog(void *parameter)
       Axis_Elbow.setSpeed(0);
       Axis_Gripper_setSpeed = 0;
       direction_Gripper_Jog = -1;
-      switch (jogCommand)
+      switch (command_jog)
       {
       case 1:
         Axis_Base.setSpeed(JOG_SPEED);
@@ -510,14 +511,93 @@ void setup_task()
 //================================================================================//
 //===================== HTTP HANDLERS - Nhận dữ liệu từ Server ===================//
 //================================================================================//
+void UpdateCurrentPosition()
+{
+  CurrentPosition.X = Axis_Base.currentPosition();
+  CurrentPosition.Y = Axis_Shoulder.currentPosition();
+  CurrentPosition.Z = Axis_Elbow.currentPosition();
+  CurrentPosition.T = g_encoderCount;
+  CurrentPosition.Speed_X = Axis_Base.speed();
+  CurrentPosition.Speed_Y = Axis_Shoulder.speed();
+  CurrentPosition.Speed_Z = Axis_Elbow.speed();
+}
 
+void handleUnifiedCommand() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "application/json", "{\"error\":\"No data\"}");
+    return;
+  }
+  
+  String body = server.arg("plain");
+  deserializeJson(jsonDocument, body);
+  
+  String task = jsonDocument["task"];
+  Serial.print("Web Command: "); Serial.println(task);
 
+  // --- STOP ---
+  if (task == "Stop") {
+    Mode = -3; // Stop tất cả
+    Axis_Base.stop(); Axis_Shoulder.stop(); Axis_Elbow.stop();
+    MoveAxisGripper(-1, 0);
+    server.send(200, "application/json", "{\"status\":\"Stopped\"}");
+  }
+  // --- JOG ---
+  else if (task == "Jog") {
+    Mode = 0;
+    command_jog = jsonDocument["command_jog"];
+    server.send(200, "application/json", "{\"status\":\"Jogging\"}");
+  }
+  // --- AUTO CHAIN ---
+  else if (task == "Autochain") {
+    Mode = -2; // Stop trước khi nạp
+    TotalSteps = jsonDocument["TotalSteps"];
+    JsonArray coords = jsonDocument["Coordinates_auto"];
+    
+    for(int i=0; i<TotalSteps; i++) {
+      Moving_Coordinates[i].X = coords[i]["X"];
+      Moving_Coordinates[i].Y = coords[i]["Y"];
+      Moving_Coordinates[i].Z = coords[i]["Z"];
+      Moving_Coordinates[i].T = coords[i]["T"];
+      Moving_Coordinates[i].Speed_X = coords[i]["speed_X"];
+      Moving_Coordinates[i].Speed_Y = coords[i]["speed_Y"];
+      Moving_Coordinates[i].Speed_Z = coords[i]["speed_Z"];
+      Moving_Coordinates[i].Speed_T = coords[i]["speed_T"];
+    }
+    autoChainStep = 0;
+    Mode = 1; // Start Auto
+    server.send(200, "application/json", "{\"status\":\"Auto Started\"}");
+  }
+  // --- CLASSIFY ---
+  else if (task == "Classify") {
+    Mode = -2;
+    TotalSteps = jsonDocument["TotalSteps"];
+    JsonArray coords = jsonDocument["Coordinates_classify"];
+    
+    for(int i=0; i<TotalSteps; i++) {
+      Classify[i].X = coords[i]["X"];
+      Classify[i].Y = coords[i]["Y"];
+      Classify[i].Z = coords[i]["Z"];
+      Classify[i].T = coords[i]["T"];
+      Classify[i].Speed_X = coords[i]["speed_X"];
+      Classify[i].Speed_Y = coords[i]["speed_Y"];
+      Classify[i].Speed_Z = coords[i]["speed_Z"];
+      Classify[i].Speed_T = coords[i]["speed_T"];
+    }
+    currentStep = 0;
+    Mode = 2; // Start Classify
+    server.send(200, "application/json", "{\"status\":\"Classify Started\"}");
+  }
+  else {
+    server.send(400, "application/json", "{\"error\":\"Unknown task\"}");
+  }
+}
 
 // Setup Web Server
 void setup_webserver()
 {
   server.on("/command", HTTP_POST, handleUnifiedCommand);
   server.on("/status", HTTP_GET, handleStatus_Unified);
+  server.on("/current_position", HTTP_GET, UpdateCurrentPosition);
   server.begin();
   Serial.println("Web server started on /command and /status");
 }
