@@ -6,7 +6,7 @@
 
 WebServer serverAP(80); 
 Preferences prefs;
-StaticJsonDocument<512> jsonDocAP;
+JsonDocument jsonDocAP;
 bool _isAPMode = false;
 bool _isWifiConnected = false;
 
@@ -21,7 +21,7 @@ void handleSave() {
   String pass = jsonDocAP["password"];
 
   if (ssid.length() > 0) {
-    prefs.begin("cau hinh wifi", false);
+    prefs.begin("wifi-conf", false);
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
     prefs.end();
@@ -29,6 +29,37 @@ void handleSave() {
     delay(1000);
     ESP.restart();
   }
+}
+// Hàm hiển thị giao diện nhập WiFi
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Cai Dat WiFi Robot</title>";
+  html += "<style>body{font-family:sans-serif;text-align:center;margin-top:50px;} input{padding:10px;width:80%;margin:10px 0;} button{padding:10px 20px;background:#28a745;color:white;border:none;}</style></head>";
+  html += "<body><h1>Cau Hinh WiFi Robot</h1>";
+  html += "<form action='/save-wifi' method='POST' enctype='text/plain'>"; // Gửi thẳng text raw
+  html += "<input type='text' id='ssid' placeholder='Ten WiFi (SSID)'><br>";
+  html += "<input type='text' id='password' placeholder='Mat khau'><br>";
+  
+  // Javascript nhỏ để gom dữ liệu thành JSON trước khi gửi cho khớp với code của bạn
+  html += "<button type='button' onclick='submitForm()'>Luu & Khoi Dong</button>";
+  html += "</form>";
+  
+  html += "<script>";
+  html += "function submitForm() {";
+  html += "  var ssid = document.getElementById('ssid').value;";
+  html += "  var pass = document.getElementById('password').value;";
+  html += "  var data = JSON.stringify({ssid: ssid, password: pass});"; // Đóng gói JSON
+  html += "  var xhr = new XMLHttpRequest();";
+  html += "  xhr.open('POST', '/save-wifi', true);";
+  html += "  xhr.setRequestHeader('Content-Type', 'text/plain');";
+  html += "  xhr.send(data);";
+  html += "  xhr.onload = function() { alert(this.responseText); };";
+  html += "}";
+  html += "</script>";
+  
+  html += "</body></html>";
+  
+  serverAP.send(200, "text/html", html);
 }
 
 void setupWifiAP() {
@@ -41,8 +72,8 @@ void setupWifiAP() {
     _isAPMode = true;
     WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(AP_IP_ADDRESS, AP_IP_ADDRESS, IPAddress(255, 255, 255, 0));
-    WiFi.softAP(accespoint esp32, NULL);
-    
+    WiFi.softAP("ROBOT_SETUP_WIFI", NULL);
+    serverAP.on("/", HTTP_GET, handleRoot);
     serverAP.on("/save-wifi", HTTP_POST, handleSave);
     serverAP.begin();
     Serial.println("ip 192.168.4.1");
