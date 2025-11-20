@@ -118,7 +118,8 @@ int homeAxis(AccelStepper &axis, int limPin, const char *name); // homing for on
 void SetHomeAll();                                              // homing for all axes
 void ReturnToHome(void *parameter);                             // non-blocking return to home task
 void MoveJog(void *parameter);                                  // JOG movement task
-void motor_task_AUTO(void *parameter);                          // AUTO and classify movement task
+void Robot_task_AUTO(void *parameter);                          // AUTO and classify movement task
+void Robot_task_Classify(void *parameter);                      // CLASSIFY movement task
 void setup_task();                                              // initialize RTOS tasks
 void setup_webserver();                                         // initialize web server
 void handleUnifiedCommand();                                    // POST: handle all incoming commands
@@ -489,7 +490,7 @@ void MoveJog(void *parameter)
 }
 
 //====== (SỬA LẠI HOÀN TOÀN) Task chạy chế độ AUTO (Đồng bộ Stepper + Gripper) ======
-void motor_task_AUTO(void *parameter)
+void Robot_task_AUTO(void *parameter)
 {
   while (1)
   {
@@ -576,7 +577,7 @@ Classify[6] = {X: vị trí thả lớn, Y: vị trí thả lớn, Z: vị trí 
 Classify[7] = {X: thùng, Y: thùng, Z: thùng, T: mở càng, speed_X:800, speed_Y:800, speed_Z:800, speed_T:255}
 */
 
-void motor_task_Classify(void *parameter)
+void Robot_task_Classify(void *parameter)
 {
   int MoveToStep_7 = 0;
 
@@ -698,24 +699,33 @@ void motor_task_Classify(void *parameter)
 void setup_task()
 {
   xTaskCreate(MoveJog, "MoveJog", 2048, NULL, 2, NULL);
-  xTaskCreate(motor_task_AUTO, "MotorRunAUTO", 4096, NULL, 3, NULL);
+  xTaskCreate(Robot_task_AUTO, "MotorRunAUTO", 4096, NULL, 3, NULL);
   xTaskCreate(ReturnToHome, "ReturnToHome", 4096, NULL, 1, NULL);
-  xTaskCreate(motor_task_Classify, "MotorRunClassify", 4096, NULL, 3, NULL);
+  xTaskCreate(Robot_task_Classify, "MotorRunClassify", 4096, NULL, 3, NULL);
 }
 
 //================================================================================//
 //===================== HTTP HANDLERS - Nhận dữ liệu từ Server ===================//
 //================================================================================//
-void UpdateCurrentPosition()
-{
-  CurrentPosition.X = Axis_Base.currentPosition();
-  CurrentPosition.Y = Axis_Shoulder.currentPosition();
-  CurrentPosition.Z = Axis_Elbow.currentPosition();
-  long encoderPos = readEncoderCount();
-  CurrentPosition.T = encoderPos;
-  CurrentPosition.Speed_X = Axis_Base.speed();
-  CurrentPosition.Speed_Y = Axis_Shoulder.speed();
-  CurrentPosition.Speed_Z = Axis_Elbow.speed();
+void handleGetCurrentPosition() {
+  StaticJsonDocument<384> posDoc; //tạo mảng JSON cục bộ
+  // Đọc Vị trí (Position)
+  posDoc["X"] = Axis_Base.currentPosition();
+  posDoc["Y"] = Axis_Shoulder.currentPosition();
+  posDoc["Z"] = Axis_Elbow.currentPosition();
+  posDoc["T"] = readEncoderCount(); // Hàm đọc encoder an toàn
+  // Đọc Vận tốc hiện tại (Speed - steps/sec)
+  posDoc["spX"] = Axis_Base.speed();
+  posDoc["spY"] = Axis_Shoulder.speed();
+  posDoc["spZ"] = Axis_Elbow.speed();
+  //  Đọc Số lượng vật phẩm đã phân loại (Counters)
+  posDoc["nSmall"] = Number_of_Objects_small;
+  posDoc["nMedium"]  = Number_of_Objects_medium;
+  posDoc["nLarge"] = Number_of_Objects_large;
+  //  Chuyển đổi sang chuỗi (Serialize)
+  char buffer[384];
+  serializeJson(posDoc, buffer);
+  server.send(200, "application/json", buffer);
 }
 
 void handleUnifiedCommand()
@@ -778,7 +788,7 @@ void handleUnifiedCommand()
     Mode = -3; // Stop trước khi nạp
     JsonArray coords = jsonDocument["Coordinates_classify"];
 
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 8; i++) //duyệt từ 0 đến 7 mảng Classify
     {
       Classify[i].X = coords[i]["X"];
       Classify[i].Y = coords[i]["Y"];
@@ -818,10 +828,9 @@ void handleUnifiedCommand()
 void setup_webserver()
 {
   server.on("/command", HTTP_POST, handleUnifiedCommand);
-  // server.on("/status", HTTP_GET, handleStatus_Unified);
-  server.on("/current_position", HTTP_GET, UpdateCurrentPosition);
+  server.on("/current_position", HTTP_GET, handleGetCurrentPosition);
   server.begin();
-  Serial.println("Web server started on /command and /status");
+  Serial.println("Web server started on /command and /current_position");
 }
 
 // ====== WiFi setup helper ======
@@ -867,8 +876,8 @@ void setup()
   Axis_Elbow.setMaxSpeed(1000);
   Axis_Elbow.setAcceleration(2000);
 
-  Serial.println("Robot chua san sang.");
-  SetHomeAll();
+  //Serial.println("Robot chua san sang.");
+  //SetHomeAll();
 
   setup_task();
   setupWiFi();
