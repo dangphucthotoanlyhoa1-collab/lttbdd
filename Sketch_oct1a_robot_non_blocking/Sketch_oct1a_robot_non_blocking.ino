@@ -123,7 +123,7 @@ void Robot_task_Classify(void *parameter);                      // CLASSIFY move
 void setup_task();                                              // initialize RTOS tasks
 void setup_webserver();                                         // initialize web server
 void handleUnifiedCommand();                                    // POST: handle all incoming commands
-void UpdateCurrentPosition();                                   // GET: update current position
+void handleGetCurrentPosition();                                   // GET: update current position
 
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED; // encoder priority access mutex
 
