@@ -106,7 +106,11 @@ Task: Stop,
 
 Không phải tất cả các trường trong JSON đều bắt buộc trong mỗi tác vụ. Nó chỉ là 1 JSON tổng quát để cho việc quản lý
 trở nên dễ dàng và đồng bộ.
-
+/*
+Ví dụ, khi phân loại được vật, kích thước vật (Object_Size) được lưu vào mảng Size_of_objects nếu đang ở chế độ phân loại (mode == 2).
+kích thước vật sẽ được lưu từ Size_of_objects[0] đến Size_of_objects[Counter_Size_of_objects - 1].
+Khi mất điện và có điện trở lại, dữ liệu sẽ bắt đầu ghi lại từ đầu (vị trí 0), ghi đè lên dữ liệu cũ.
+M chỉ cần cập nhật mảng Size_of_objects[100] lên database. Biến Counter_Size_of_objects cho biết có bao nhiêu vật đã được phân loại.
 */
 // Function prototypes
 void IRAM_ATTR onEncoderPulse();                                // intererupt handler for encoder
@@ -181,7 +185,6 @@ int TotalSteps = 0;                // Số bước chạy auto (sẽ được c�
 //=======Biến điều khiển encoder gripper ======
 const int ENCODER_PIN = 18; // Chân đọc encoder
 volatile long g_encoderCount = 0;
-volatile float Object_Size = 0.0;        // Kích thước vật cầm nắm (cm)
 const float GRIPPER_PULSES_PER_CM = 0.1; // Số xung encoder trên mỗi mm di chuyển của gripper
 
 // (MỚI) Hằng số phát hiện kẹp (Stall)
@@ -195,7 +198,10 @@ int Object_Medium_size = 4;
 int Number_of_Objects_small = 0;
 int Number_of_Objects_medium = 0;
 int Number_of_Objects_large = 0;
-int Flag_Object_size = 0; // 1: vật nhỏ , 2: vật vừa, 3: vật lớn
+volatile float Object_Size = 0.0;        // Kích thước vật cầm nắm (cm)
+// kích thước của các vật đã phân loại
+float Size_of_objects[100];
+int Counter_Size_of_objects = 0;
 
 // Biến tạm cho hàm DetachObject
 long time_now = 0;
@@ -299,6 +305,10 @@ int DetachObject()
       {
         Number_of_Objects_large++;
         Flag_Object_size = 3;
+      }
+      if (mode == 2){
+        Size_of_objects[Counter_Size_of_objects] = Object_Size;
+        Counter_Size_of_objects++;
       }
       time_now = 0;
       value_now = 0;
@@ -860,9 +870,8 @@ void setup()
   pinMode(LIM_SHOULDER_PIN, INPUT_PULLUP); // cấu hình chân công tắc hành trình trục nâng
   pinMode(LIM_BASE_PIN, INPUT_PULLUP);     // cấu hình chân công tắc hành trình trục quay
 
-  //===== (SỬA) Cấu hình PWM cho Gripper ======
-  ledcAttachChannel(Axis_Gripper_forward_PIN, 5000, 8, 0);  // Kênh 0 cho mở càng
-  ledcAttachChannel(Axis_Gripper_backward_PIN, 5000, 8, 1); // Kênh 1 cho đóng càng
+  ledcAttachChannel(Axis_Gripper_forward_PIN, 5000, 8, 0);  // mở càng
+  ledcAttachChannel(Axis_Gripper_backward_PIN, 5000, 8, 1); // đóng càng
   // cấu hình encoder
   pinMode(ENCODER_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(ENCODER_PIN), onEncoderPulse, FALLING);
