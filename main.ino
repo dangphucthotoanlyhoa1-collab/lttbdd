@@ -1,3 +1,4 @@
+
 #include "WifiAP.h"
 #include "FirebaseLogic.h"
 #include "config.h"
@@ -13,7 +14,8 @@ volatile int Mode = 0;
 volatile int autoChainMode = 0;
 volatile int TotalSteps = 0;
 volatile float Object_Size = 0.0;
-
+float Size_of_objects[100]; 
+int Counter_Size_of_objects = 0;
 // 3. Khai báo biến đếm vật phẩm
 int Number_of_Objects_small = 0;
 int Number_of_Objects_medium = 0;
@@ -41,7 +43,6 @@ void setup() {
 void loop() {
   loopWifiAP();
   if (isWifiConnected()) {
-    
-     loopFirebase();
+         loopFirebase();
   }
 }
