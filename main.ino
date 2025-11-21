@@ -1,4 +1,3 @@
-
 #include "WifiAP.h"
 #include "FirebaseLogic.h"
 #include "config.h"
