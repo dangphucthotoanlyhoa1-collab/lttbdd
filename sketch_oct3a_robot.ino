@@ -199,6 +199,7 @@ int Number_of_Objects_small = 0;
 int Number_of_Objects_medium = 0;
 int Number_of_Objects_large = 0;
 volatile float Object_Size = 0.0;        // Kích thước vật cầm nắm (cm)
+volatile int Flag_Object_size = 0;
 // kích thước của các vật đã phân loại
 float Size_of_objects[100];
 int Counter_Size_of_objects = 0;
@@ -306,7 +307,7 @@ int DetachObject()
         Number_of_Objects_large++;
         Flag_Object_size = 3;
       }
-      if (mode == 2){
+      if (Mode == 2){
         Size_of_objects[Counter_Size_of_objects] = Object_Size;
         Counter_Size_of_objects++;
       }
@@ -732,6 +733,7 @@ void handleGetCurrentPosition() {
   posDoc["nSmall"] = Number_of_Objects_small;
   posDoc["nMedium"]  = Number_of_Objects_medium;
   posDoc["nLarge"] = Number_of_Objects_large;
+  
   //  Chuyển đổi sang chuỗi (Serialize)
   char buffer[384];
   serializeJson(posDoc, buffer);
