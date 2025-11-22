@@ -157,9 +157,9 @@ const char *SSID = "Thanh Gia 1";
 const char *PWD = "ThanhgiA1931";
 
 //========== Khai báo các đối tượng stepper motor ======
-AccelStepper Axis_Base(AccelStepper::DRIVER, 26, 27);     // Step, Dir
+AccelStepper Axis_Base(AccelStepper::DRIVER, 21, 19);     // Step, Dir
 AccelStepper Axis_Shoulder(AccelStepper::DRIVER, 32, 33); // Step, Dir
-AccelStepper Axis_Elbow(AccelStepper::DRIVER, 25, 21);    // Step, Dir
+AccelStepper Axis_Elbow(AccelStepper::DRIVER, 26, 27);    // Step, Dir
 #define Axis_Gripper_forward_PIN 16                        // kẹp lại
 #define Axis_Gripper_backward_PIN 4                       // mở ra
 volatile int Direction_Gripper = 0;                       // Hướng kẹp vật: 0= đóng càng, 1= mở càng
@@ -172,11 +172,11 @@ volatile int Direction_Gripper = 0;                       // Hướng kẹp vậ
 // ====== Chân công tắc hành trình ======
 const int LIM_BASE_PIN = 13;     // chỉnh theo phần cứng
 const int LIM_SHOULDER_PIN = 23; // chỉnh theo phần cứng
-const int LIM_ELBOW_PIN = 19;    // chỉnh theo phần cứng
+const int LIM_ELBOW_PIN = 25;    // chỉnh theo phần cứng
 
 // ====== Các biến điều khiển robot (State Machine) ======
 volatile int command_jog = 0;      // 0=STOP, 1=Base+, 2=Base-, 3=Shoulder+, 4=Shoulder-, 5=Elbow+, 6=Elbow-
-const float JOG_SPEED = 600.0;     // Vận tốc cố định 600
+const float JOG_SPEED = 200.0;     // Vận tốc cố định 600
 volatile int Mode = -3;            // -3= Stop, -2= SetHome ,-1=ReturnHome, 0=jog, 1=chain, 2=classify
 volatile int autoChainStep = 0;    // bước hiện tại trong chuỗi
 volatile int autoClassifyStep = 0; // bước hiện tại trong phân loại
@@ -228,6 +228,137 @@ int Disable_Axis_Gripper = 0;
 //===================== các tác vụ điều khiển robot ==============================//
 
 // Hàm ngắt đọc encoder gripper
+
+// ============================================================
+// ====== HÀM XỬ LÝ LỆNH SERIAL (Bàn phím) NÂNG CAO =======
+// ============================================================
+void handleSerialInput()
+{
+  if (Serial.available() > 0)
+  {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    if (input.length() == 0) return;
+
+    char commandChar = input.charAt(0);
+    int value = input.substring(1).toInt();
+
+    // --- M: CHUYỂN MODE THỦ CÔNG ---
+    if (commandChar == 'M' || commandChar == 'm')
+    {
+      Mode = value;
+      command_jog = 0; // Reset jog
+      Serial.print(">>> Mode changed to: "); Serial.println(Mode);
+      if (Mode == -3) {
+         Axis_Base.stop(); Axis_Shoulder.stop(); Axis_Elbow.stop();
+         MoveAxisGripper(-1, 0);
+         Serial.println(">>> EMERGENCY STOP");
+      }
+      if (Mode == -2) { Serial.println(">>> Homing..."); SetHomeAll(); }
+    }
+
+    // --- J: LỆNH JOG ---
+    else if (commandChar == 'J' || commandChar == 'j')
+    {
+      if (Mode == 0) {
+        command_jog = value;
+        Serial.print(">>> Jogging: "); Serial.println(command_jog);
+      } else {
+        Serial.println("!!! Error: Must be in Mode 0 (Jog) first (Type 'M0')");
+      }
+    }
+
+    // --- A: TEST AUTO MODE (Chạy thử chuỗi 2 điểm) ---
+    else if (commandChar == 'A' || commandChar == 'a')
+    {
+      Serial.println(">>> LOADING DEMO DATA FOR AUTOCHAIN...");
+      
+      // 1. Giả lập dữ liệu tọa độ (2 bước)
+      TotalSteps = 2;
+      
+      // Bước 1: Vươn ra vị trí 1000, Mở càng
+      Moving_Coordinates[0].X = 1000; Moving_Coordinates[0].Speed_X = 400;
+      Moving_Coordinates[0].Y = 500;  Moving_Coordinates[0].Speed_Y = 400;
+      Moving_Coordinates[0].Z = 200;  Moving_Coordinates[0].Speed_Z = 400;
+      Moving_Coordinates[0].T = 0;    Moving_Coordinates[0].Speed_T = 255; // 1=Mở
+
+      // Bước 2: Về 0, Đóng càng
+      Moving_Coordinates[1].X = 0;    Moving_Coordinates[1].Speed_X = 400;
+      Moving_Coordinates[1].Y = 0;    Moving_Coordinates[1].Speed_Y = 400;
+      Moving_Coordinates[1].Z = 0;    Moving_Coordinates[1].Speed_Z = 400;
+      Moving_Coordinates[1].T = 0;    Moving_Coordinates[1].Speed_T = 255; // 0=Đóng
+
+      // 2. Thiết lập biến chạy
+      autoChainStep = 0;
+      Mode = -2; // Mẹo: Stop nhẹ trước khi chạy
+      delay(100);
+      Mode = 1;  // Kích hoạt Mode Auto
+      Serial.println(">>> AUTOCHAIN STARTED (2 Steps Demo)");
+    }
+
+    // --- C: TEST CLASSIFY MODE (Chạy thử quy trình phân loại) ---
+    else if (commandChar == 'C' || commandChar == 'c')
+    {
+      Serial.println(">>> LOADING DEMO DATA FOR CLASSIFY...");
+
+      // Nạp dữ liệu giả cho 8 bước Classify (Giống trong JSON mẫu)
+      // Lưu ý: Bạn hãy sửa các số 1000, 500... thành tọa độ thực tế robot của bạn để test an toàn
+      
+      // Bước 0: Vị trí chờ/nhìn
+      Classify[0] = {0, 0, 0, 1, 800, 800, 800, 255}; 
+      
+      // Bước 1: Tiếp cận vật
+      Classify[1] = {1000, 500, 200, 1, 800, 800, 800, 255}; 
+      
+      // Bước 2: Kẹp vật (T=0, speed=255 để kẹp nhanh)
+      Classify[2] = {1000, 500, 200, 0, 800, 800, 800, 255}; 
+      
+      // Bước 3: Nhấc lên (Giữ lực kẹp = torque)
+      Classify[3] = {1000, 500, 0, 0, 800, 800, 800, torque}; 
+
+      // Bước 4: Thả vật NHỎ (Ví dụ: X=2000)
+      Classify[4] = {2000, 500, 0, 0, 800, 800, 800, torque}; 
+      
+      // Bước 5: Thả vật VỪA
+      Classify[5] = {3000, 500, 0, 0, 800, 800, 800, torque}; 
+
+      // Bước 6: Thả vật LỚN
+      Classify[6] = {4000, 500, 0, 0, 800, 800, 800, torque}; 
+
+      // Bước 7: Về vị trí an toàn, mở càng
+      Classify[7] = {0, 0, 0, 1, 800, 800, 800, 255}; 
+
+      // Xử lý Logic bù tọa độ Y giống như trong HTTP Handler
+      Classify[0].Y += 400;
+      Classify[4].Y += 400;
+      Classify[5].Y += 400;
+      Classify[6].Y += 400;
+
+      // Reset biến chạy
+      autoClassifyStep = 0;
+      Disable_Axis_Gripper = 0;
+      Axis_Gripper_Stop = 0;
+      Detach_object_flag = 0;
+      
+      Mode = -2; 
+      delay(100);
+      Mode = 2; // Kích hoạt Mode Classify
+      Serial.println(">>> CLASSIFY STARTED (Demo Sequence)");
+    }
+
+    // --- ?: HELP ---
+    else if (commandChar == '?')
+    {
+       Serial.println("\n--- MENU TEST SERIAL ---");
+       Serial.println(" [A] : Test AUTO Mode (Chay 2 diem mau)");
+       Serial.println(" [C] : Test CLASSIFY Mode (Nap data gia lap)");
+       Serial.println(" [M0]: Ve che do JOG");
+       Serial.println("    -> J1/J2 (Base), J3/J4 (Shoulder)...");
+       Serial.println(" [M-2]: Set Home All");
+       Serial.println(" [M-3]: STOP ALL");
+    }
+  }
+}
 
 void IRAM_ATTR onEncoderPulse()
 {
@@ -522,7 +653,7 @@ void Robot_task_AUTO(void *parameter)
         Serial.println(autoChainStep);
         autoChainStep++; // Chuyển sang bước tiếp theo
 
-        if (autoChainStep > TotalSteps)
+        if (autoChainStep >= TotalSteps)
         {
           autoChainStep = 0;
         }
@@ -567,7 +698,7 @@ void Robot_task_AUTO(void *parameter)
       {
         MoveAxisGripper(-1, 0); // dừng càng
       }
-      vTaskDelay(10 / portTICK_PERIOD_MS);
+      vTaskDelay(1 / portTICK_PERIOD_MS);
     }
     else
     {
@@ -881,11 +1012,11 @@ void setup()
 
   //=====Cài đặt thông số động cơ bước=====
   Axis_Base.setMaxSpeed(1000);
-  Axis_Base.setAcceleration(2000);
+  Axis_Base.setAcceleration(6000);
   Axis_Shoulder.setMaxSpeed(1000);
-  Axis_Shoulder.setAcceleration(2000);
+  Axis_Shoulder.setAcceleration(6000);
   Axis_Elbow.setMaxSpeed(1000);
-  Axis_Elbow.setAcceleration(2000);
+  Axis_Elbow.setAcceleration(6000);
 
   //Serial.println("Robot chua san sang.");
   //SetHomeAll();
@@ -899,8 +1030,33 @@ void setup()
 }
 
 // ====== Hàm loop ======
+// Khai báo biến đếm thời gian (để bên ngoài hoặc static bên trong)
+unsigned long lastDebugTime = 0;
+const int DEBUG_INTERVAL = 500; // Thời gian in lại (ms) - Chỉnh số này nếu muốn nhanh/chậm hơn
+
 void loop()
 {
+  // --- 1. Các tác vụ ưu tiên (Phải chạy liên tục) ---
   server.handleClient(); // Xử lý client requests
-  // vTaskDelay(1 / portTICK_PERIOD_MS);
+  handleSerialInput();   // Xử lý lệnh bàn phím
+
+  // --- 2. Phần Debug (Chỉ chạy mỗi 500ms) ---
+  if (millis() - lastDebugTime > DEBUG_INTERVAL)
+  {
+    lastDebugTime = millis(); // Cập nhật thời gian
+
+    // In gọn trên 1 dòng để dễ quan sát biến động
+    Serial.print("POS [Base]: ");
+    Serial.print(Axis_Base.currentPosition());
+
+    Serial.print(" | [Shoulder]: ");
+    Serial.print(Axis_Shoulder.currentPosition());
+
+    Serial.print(" | [Elbow]: ");
+    Serial.print(Axis_Elbow.currentPosition()); // (Đã sửa nhãn từ 'base' thành 'Elbow')
+
+    Serial.print(" | [Gripper]: ");
+    // Nên dùng hàm readEncoderCount() để đảm bảo an toàn ngắt thay vì đọc trực tiếp biến
+    Serial.println(readEncoderCount()); 
+  }
 }
