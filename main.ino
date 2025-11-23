@@ -2,6 +2,8 @@
 #include "WifiAP.h"
 #include "FirebaseLogic.h"
 #include "config.h"
+unsigned long buttonTimer = 0;
+bool buttonActive = false;
 AccelStepper Axis_Base(AccelStepper::DRIVER, 0, 0);     
 AccelStepper Axis_Shoulder(AccelStepper::DRIVER, 0, 0); 
 AccelStepper Axis_Elbow(AccelStepper::DRIVER, 0, 0);
@@ -30,6 +32,7 @@ long readEncoderCount() {
 }
 void setup() {
   Serial.begin(115200);
+  pinMode(0, INPUT_PULLUP);
   setupWifiAP();
   if (isWifiConnected()) {
     delay(2000);
@@ -41,8 +44,30 @@ void setup() {
 }
 
 void loop() {
+  
   loopWifiAP();
   if (isWifiConnected()) {
          loopFirebase();
+  }
+  if (digitalRead(0) == LOW) {
+    // Nếu mới bắt đầu nhấn
+    if (!buttonActive) {
+      buttonActive = true;
+      buttonTimer = millis(); // Bắt đầu tính giờ
+      Serial.println(">> Dang giu nut... (Giu 3s de Reset WiFi)");
+    }
+    
+    // Nếu đang giữ nút, kiểm tra xem đã đủ 3 giây chưa
+    if ((millis() - buttonTimer > 3000)) {
+       Serial.println(">> DA DU 3 GIAY! TIEN HANH RESET...");
+       resetWifiConfig(); // Gọi hàm reset bên WifiAP.cpp
+       buttonActive = false; // Reset trạng thái
+    }
+  } else {
+    // Nếu nhả nút ra
+    if (buttonActive) {
+      buttonActive = false;
+      Serial.println(">> Da nha nut (Huy Reset).");
+    }
   }
 }

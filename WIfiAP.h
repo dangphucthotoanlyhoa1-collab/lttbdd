@@ -6,5 +6,5 @@ void handleSave();
 void setupWifiAP();
 void loopWifiAP();
 bool isWifiConnected();
-
+void resetWifiConfig();
 #endif

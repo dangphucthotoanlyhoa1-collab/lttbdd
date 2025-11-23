@@ -23,6 +23,7 @@ const int ENCODER_PIN = 35;
 #define GRIPPER_BWD_PIN 4
 extern float Size_of_objects[100]; 
 extern int Counter_Size_of_objects;
+
 struct toado {
   float x; float y; float z; float t;
   int speedX; int speedY; int speedZ; int speedT; 

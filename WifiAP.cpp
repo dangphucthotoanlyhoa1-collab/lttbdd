@@ -105,3 +105,17 @@ void loopWifiAP() {
 }
 
 bool isWifiConnected() { return _isWifiConnected; }
+void resetWifiConfig() {
+  Serial.println("Dang xoa WiFi va Reset...");
+  
+  // 1. Xóa trong bộ nhớ Preferences
+  prefs.begin("wifi-conf", false);
+  prefs.clear(); 
+  prefs.end();
+  
+  // 2. Xóa trong bộ nhớ WiFi của ESP32
+  WiFi.disconnect(true, true); 
+  
+  delay(500);
+  ESP.restart(); // Tự động khởi động lại
+}

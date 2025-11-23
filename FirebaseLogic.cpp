@@ -9,6 +9,7 @@ FirebaseData fbdo;
 FirebaseData fbdo_push;  
 FirebaseAuth auth;
 FirebaseConfig config;
+unsigned long last_heartbeat_ms = 0;
 extern float Size_of_objects[100]; 
 extern int Counter_Size_of_objects;
 int last_counter_size = -1;
@@ -21,7 +22,7 @@ int last_Number_of_Objects_small =-99999;
 int last_Number_of_Objects_medium =-99999;
 int last_Number_of_Objects_large =-99999;
 unsigned long sendDataPrevMillis = 0;
-
+static int beat_count = 0;
 void parseArray(const String &jsonStr) { 
        static StaticJsonDocument<2048> doc; 
     doc.clear(); // Xóa dữ liệu cũ trước khi nạp mới
@@ -108,6 +109,13 @@ void streamCallback(StreamData data) {
   else if (data.dataPath() == "/Classify/TotalSteps") {
      TotalSteps = data.intData();
   }
+  else if (data.dataPath() == "/control/Autochain/Coordinates_auto") {
+      String jsonStr = data.jsonString();
+      
+      Serial.println(">> Nhan duoc mang toa do tu App!");
+      
+      parseArray(jsonStr); 
+  }
 }
 
 // =================================================================
@@ -190,4 +198,15 @@ void loopFirebase() {
             Serial.printf("Da cap nhat mang phan loai: %d vat\n", Counter_Size_of_objects);
         }
         }
+       if (Firebase.ready() && (millis() - last_heartbeat_ms > 2000)) {
+    last_heartbeat_ms = millis();
+    
+    beat_count++; 
+    if (beat_count > 100) beat_count = 0; // Reset khi đến 100
+    
+    Firebase.setInt(fbdo_push, ROBOT_NODE "/status/heartbeat", beat_count);
 }
+}
+
+
+
