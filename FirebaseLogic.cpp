@@ -22,6 +22,9 @@ int last_Number_of_Objects_small =-99999;
 int last_Number_of_Objects_medium =-99999;
 int last_Number_of_Objects_large =-99999;
 unsigned long sendDataPrevMillis = 0;
+int Object_Small_size ;
+int Object_Large_size ;
+int Object_Medium_size ;
 static int beat_count = 0;
 void parseArray(const String &jsonStr) { 
        static StaticJsonDocument<2048> doc; 
@@ -54,6 +57,19 @@ void streamCallback(StreamData data) {
                 data.dataPath().c_str(),
                 data.dataType().c_str(),
                 data.eventType().c_str());
+     if (data.dataPath() == "/speed" || data.dataPath() == "/") {
+      FirebaseJson json = data.jsonObject();
+      FirebaseJsonData result;
+      
+      json.get(result, "speed"); 
+      if (result.success) {
+          int newSpeed = result.to<int>();
+          Axis_Base.setMaxSpeed(newSpeed);
+          Axis_Shoulder.setMaxSpeed(newSpeed);
+          Axis_Elbow.setMaxSpeed(newSpeed);
+          Serial.printf("✅ Tốc độ mới: %d\n", newSpeed);
+      }
+  }           
 
   if (data.dataPath() == "/") {
     if (data.dataType() == "json") {
@@ -63,10 +79,24 @@ void streamCallback(StreamData data) {
       // 1. Nhận lệnh JOG
       tmp.get(result, "jog/command_jog");
       if (result.success) {
-         command_jog = result.to<int>();
+         command_jog= result.to<int>();
          Serial.print("Sync JOG: "); Serial.println(command_jog);
       }
-
+       tmp.get(result, "size/small");
+      if (result.success) {
+         Object_Small_size = result.to<int>();
+         Serial.print("size small: "); Serial.println(Object_Small_size);
+      }
+       tmp.get(result, "size/medium");
+      if (result.success) {
+         Object_Medium_size = result.to<int>();
+         Serial.print("size medium: "); Serial.println(Object_Medium_size);
+      }
+       tmp.get(result, "size/large");
+      if (result.success) {
+         Object_Large_size = result.to<int>();
+         Serial.print("size large: "); Serial.println(Object_Large_size );
+      }
       // 2. Nhận lệnh TASK
       tmp.get(result, "funtion/Task");
       if (result.success) {
@@ -92,6 +122,18 @@ void streamCallback(StreamData data) {
   else if (data.dataPath() == "/jog/command_jog") {
      command_jog = data.intData();
      Serial.print("Update JOG: "); Serial.println(command_jog);
+  }
+  else if (data.dataPath() == "/size/small") {
+     Object_Small_size = data.intData();
+     Serial.print("Update size small: "); Serial.println(Object_Small_size);
+  }
+  else if (data.dataPath() == "/size/medium") {
+     Object_Medium_size = data.intData();
+     Serial.print("Update size medium: "); Serial.println(Object_Medium_size);
+  }
+  else if (data.dataPath() == "/size/large") {
+     Object_Large_size = data.intData();
+     Serial.print("Update size large: "); Serial.println( Object_Large_size);
   }
   else if (data.dataPath() == "/funtion/Task") {
      task = data.stringData();
