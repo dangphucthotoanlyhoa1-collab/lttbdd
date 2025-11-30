@@ -1164,6 +1164,13 @@ void loop()
     {
         loopFirebase();
     }
+    else {
+       if (task != "STOP") {
+           Serial.println("!!! MAT KET NOI WIFI - DUNG KHAN CAP !!!");
+           task = "STOP"; 
+       }
+       Serial.println(task);
+  }
     if (digitalRead(0) == LOW)
     {
         // Nếu mới bắt đầu nhấn
