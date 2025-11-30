@@ -32,7 +32,7 @@ static int beat_count = 0;
 volatile int diem_hien_co = 0;
 void parseArray(const String &jsonStr)
 {
-   Mode = -3; 
+   Mode = -3;
    // Guard: nếu chuỗi rỗng hoặc chỉ chứa null thì thử fetch từ RTDB một lần
    String payload = jsonStr;
    if (payload.length() == 0 || payload == "null")
@@ -43,11 +43,13 @@ void parseArray(const String &jsonStr)
       if (Firebase.get(fbdo_push, fullPath.c_str()))
       {
          payload = fbdo_push.jsonString();
-         Serial.print("Fetched length: "); Serial.println(payload.length());
+         Serial.print("Fetched length: ");
+         Serial.println(payload.length());
       }
       else
       {
-         Serial.print("fetch from RTDB failed: "); Serial.println(fbdo_push.errorReason());
+         Serial.print("fetch from RTDB failed: ");
+         Serial.println(fbdo_push.errorReason());
       }
       if (payload.length() == 0 || payload == "null")
       {
@@ -83,8 +85,10 @@ void parseArray(const String &jsonStr)
       JsonArray arr = doc.as<JsonArray>();
       for (JsonVariant v : arr)
       {
-         if (diem_hien_co >= 1000) break; // giới hạn theo kích thước mảng
-         if (v.isNull()) continue;
+         if (diem_hien_co >= 1000)
+            break; // giới hạn theo kích thước mảng
+         if (v.isNull())
+            continue;
          JsonObject p = v.as<JsonObject>();
 
          Coordinates_auto[diem_hien_co].x = p["X"] | 0;
@@ -106,9 +110,11 @@ void parseArray(const String &jsonStr)
       JsonObject root = doc.as<JsonObject>();
       for (JsonPair kv : root)
       {
-         if (diem_hien_co >= 1000) break;
+         if (diem_hien_co >= 1000)
+            break;
          JsonObject p = kv.value().as<JsonObject>();
-         if (p.isNull()) continue;
+         if (p.isNull())
+            continue;
 
          Coordinates_auto[diem_hien_co].x = p["X"] | 0;
          Coordinates_auto[diem_hien_co].y = p["Y"] | 0;
@@ -133,14 +139,14 @@ void parseArray(const String &jsonStr)
    if (diem_hien_co > 0)
    {
       Serial.printf("Point0 X=%.1f Y=%.1f Z=%.1f T=%d speedX=%.1f speedY=%.1f speedZ=%.1f speedT=%d\n",
-                 Coordinates_auto[0].x,
-                 Coordinates_auto[0].y,
-                 Coordinates_auto[0].z,
-                 Coordinates_auto[0].t,
-                 Coordinates_auto[0].speedX,
-                 Coordinates_auto[0].speedY,
-                 Coordinates_auto[0].speedZ,
-                 Coordinates_auto[0].speedT);
+                    Coordinates_auto[0].x,
+                    Coordinates_auto[0].y,
+                    Coordinates_auto[0].z,
+                    Coordinates_auto[0].t,
+                    Coordinates_auto[0].speedX,
+                    Coordinates_auto[0].speedY,
+                    Coordinates_auto[0].speedZ,
+                    Coordinates_auto[0].speedT);
    }
 }
 
@@ -229,10 +235,10 @@ void streamCallback(StreamData data)
             TotalSteps = result.to<int>();
 
          tmp.get(result, "Classify/Coordinates_auto");
-         if (result.success){
+         if (result.success)
+         {
             parseArray(result.to<String>());
          }
-            
       }
    }
    // Xử lý các path lẻ (Giữ nguyên logic cũ của bạn)
@@ -243,46 +249,55 @@ void streamCallback(StreamData data)
       Serial.print("Update JOG: ");
       Serial.println(command_jog);
    }
-    if (data.dataPath() == "/size/small")
+   if (data.dataPath() == "/size/small")
    {
       Object_Small_size = data.intData();
       Serial.print("Update size small: ");
       Serial.println(Object_Small_size);
    }
-    if (data.dataPath() == "/size/medium")
+   if (data.dataPath() == "/size/medium")
    {
       Object_Medium_size = data.intData();
       Serial.print("Update size medium: ");
       Serial.println(Object_Medium_size);
    }
-    if (data.dataPath() == "/size/large")
+   if (data.dataPath() == "/size/large")
    {
       Object_Large_size = data.intData();
       Serial.print("Update size large: ");
       Serial.println(Object_Large_size);
    }
-    if (data.dataPath() == "/funtion/Task")
+   if (data.dataPath() == "/funtion/Task")
    {
       task = data.stringData();
       Serial.print("Update TASK: ");
       Serial.println(task);
-      if (task == "AutoChain") {
+      if (task == "AutoChain")
+      {
          Mode = 1;
-      } else if (task == "Stop" || task == "Pause") {
+      }
+      else if (task == "Stop" || task == "Pause")
+      {
          Mode = -3;
-      } if (task == "Classify") {
+      }
+      if (task == "Classify")
+      {
          Mode = 2;
-      } else if (task == "ReturnHome") {
+      }
+      else if (task == "ReturnHome")
+      {
          Mode = -1;
-      } else if (task == "SetHome") {
+      }
+      else if (task == "SetHome")
+      {
          Mode = -2;
       }
       Serial.print("Mode set to: ");
       Serial.println(Mode);
    }
-    if (data.dataPath() == "/Autochain/Coordinates_auto")
+   if (data.dataPath() == "/Autochain/Coordinates_auto")
    {
-      Mode = -3; 
+      Mode = -3;
       parseArray(data.stringData());
       Serial.println(">> Toa do cua du lieu JSON: ");
       Serial.println(data.stringData());
@@ -308,30 +323,27 @@ void streamCallback(StreamData data)
          Serial.print(", speedT=");
          Serial.println(Coordinates_auto[i].speedT);
       }
-      
    }
-   else if (data.dataPath() == "/Autochain/TotalSteps")
+    if (data.dataPath() == "/Autochain/TotalSteps")
    {
-      Mode = 1;
+      Mode = -3;
       TotalSteps = data.intData();
       Serial.print("gia tri cua totalsteps ");
       Serial.println(TotalSteps);
    }
-   else if (data.dataPath() == "/Classify/Coordinates_auto")
+    if (data.dataPath() == "/Classify/Coordinates_auto")
    {
-      Mode = 2; // Chuyển về mode CLASSIFY khi nhận lệnh mới
-      parseArray(data.jsonString());
-      
-      
+      Mode = -3; // Chuyển về mode CLASSIFY khi nhận lệnh mới
+      parseArray(data.stringData());
    }
-   else if (data.dataPath() == "/Classify/TotalSteps")
+    if (data.dataPath() == "/Classify/TotalSteps")
    {
-      Mode = 2;
+      Mode = -3;
       TotalSteps = data.intData();
    }
-   else if (data.dataPath() == "/control/Autochain/Coordinates_auto")
+    if (data.dataPath() == "/control/Autochain/Coordinates_auto")
    {
-      String jsonStr = data.jsonString();
+      String jsonStr = data.stringData();
 
       Serial.println(">> Nhan duoc mang toa do tu App!");
 
