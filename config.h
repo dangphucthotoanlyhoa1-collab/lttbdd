@@ -40,9 +40,9 @@ typedef struct
 } XYZT_Coordinates;
 
 // Định nghĩa Chân (Pin Definitions) - Chuyển sang #define cho gọn
-#define Axis_Gripper_forward_PIN 15  // 16
-#define Axis_Gripper_backward_PIN 4  // 4
-#define LIM_BASE_PIN 13
+#define Axis_Gripper_forward_PIN 13  // 16
+#define Axis_Gripper_backward_PIN 14  // 4
+#define LIM_BASE_PIN 4
 #define LIM_SHOULDER_PIN 23
 #define LIM_ELBOW_PIN 25
 #define ENCODER_PIN_A 18
@@ -54,6 +54,9 @@ typedef struct
 #define GRIPPER_CHECK_INTERVAL 5
 #define GRIPPER_STALL_THRESHOLD 10
 #define GRIPPER_MOVE_THRESHOLD 12
+
+
+
 
 
 // ==========================================
@@ -72,7 +75,7 @@ extern AccelStepper Axis_Elbow;
 
 // Mảng dữ liệu
 extern XYZT_Coordinates Coordinates_auto[50];
-extern XYZT_Coordinates Classify[7];
+extern XYZT_Coordinates Classify[8];
 extern XYZT_Coordinates CurrentPosition;
 
 // Biến điều khiển Gripper

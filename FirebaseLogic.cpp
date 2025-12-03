@@ -30,6 +30,7 @@ unsigned long sendDataPrevMillis = 0;
 // int Object_Medium_size;
 static int beat_count = 0;
 volatile int diem_hien_co = 0;
+volatile int diem_classify = 0;
 void parseArray(const String &jsonStr)
 {
    Mode = -3;
@@ -85,7 +86,7 @@ void parseArray(const String &jsonStr)
       JsonArray arr = doc.as<JsonArray>();
       for (JsonVariant v : arr)
       {
-         if (diem_hien_co >= 1000)
+         if (diem_hien_co >= 50)
             break; // giới hạn theo kích thước mảng
          if (v.isNull())
             continue;
@@ -110,7 +111,7 @@ void parseArray(const String &jsonStr)
       JsonObject root = doc.as<JsonObject>();
       for (JsonPair kv : root)
       {
-         if (diem_hien_co >= 1000)
+         if (diem_hien_co >= 50)
             break;
          JsonObject p = kv.value().as<JsonObject>();
          if (p.isNull())
@@ -131,7 +132,8 @@ void parseArray(const String &jsonStr)
 
    // Đồng bộ TotalSteps
    TotalSteps = diem_hien_co;
-
+   Serial.print("=> TotalSteps cap nhat: ");
+   Serial.println(TotalSteps);
    // In kết quả
    Serial.print("=> Da cap nhat so diem: ");
    Serial.println(diem_hien_co);
@@ -147,6 +149,127 @@ void parseArray(const String &jsonStr)
                     Coordinates_auto[0].speedY,
                     Coordinates_auto[0].speedZ,
                     Coordinates_auto[0].speedT);
+   }
+}
+
+void parseArrayClassify(const String &jsonStr)
+{
+   Mode = -3; // Hoặc một mã Mode khác dành riêng cho Classify nếu cần
+
+   // Guard: nếu chuỗi rỗng hoặc chỉ chứa null thì thử fetch từ RTDB
+   String payload = jsonStr;
+   if (payload.length() == 0 || payload == "null")
+   {
+      Serial.println("parseArrayClassify: empty or null jsonStr, attempting fetch from RTDB...");
+
+      // --- THAY ĐỔI 1: Đường dẫn Firebase trỏ tới node Classify ---
+      // Giả định node trên Firebase tên là "Classify" nằm cùng cấp với "Coordinates_auto"
+      String fullPath = String(ROBOT_NODE) + String("/control/Autochain/Classify");
+
+      if (Firebase.get(fbdo_push, fullPath.c_str()))
+      {
+         payload = fbdo_push.jsonString();
+         Serial.print("Fetched Classify length: ");
+         Serial.println(payload.length());
+      }
+      else
+      {
+         Serial.print("fetch Classify from RTDB failed: ");
+         Serial.println(fbdo_push.errorReason());
+      }
+
+      if (payload.length() == 0 || payload == "null")
+      {
+         Serial.println("parseArrayClassify: no data available, aborting");
+         return;
+      }
+   }
+
+   Serial.print("JSON Classify nhan ve: ");
+   Serial.println(payload);
+
+   const size_t BUFFER_SIZE = 16384;
+   DynamicJsonDocument doc(BUFFER_SIZE);
+
+   DeserializationError error = deserializeJson(doc, payload);
+   if (error)
+   {
+      Serial.print("Loi JSON Parse Classify: ");
+      Serial.println(error.c_str());
+      return;
+   }
+
+   // --- THAY ĐỔI 2: Reset biến đếm riêng cho Classify ---
+   diem_classify = 0;
+
+   // Xử lý nếu là Mảng JSON
+   if (doc.is<JsonArray>())
+   {
+      Serial.println("parseArrayClassify: detected JSON Array");
+      JsonArray arr = doc.as<JsonArray>();
+      for (JsonVariant v : arr)
+      {
+         if (diem_classify >= 7)
+            break;
+         if (v.isNull())
+            continue;
+
+         JsonObject p = v.as<JsonObject>();
+
+         // --- THAY ĐỔI 3: Gán vào mảng Classify ---
+         Classify[diem_classify].x = p["X"] | 0;
+         Classify[diem_classify].y = p["Y"] | 0;
+         Classify[diem_classify].z = p["Z"] | 0;
+         Classify[diem_classify].t = p["T"] | 0;
+         Classify[diem_classify].speedX = p["speed_X"] | 0;
+         Classify[diem_classify].speedY = p["speed_Y"] | 0;
+         Classify[diem_classify].speedZ = p["speed_Z"] | 0;
+         Classify[diem_classify].speedT = p["speed_T"] | 0;
+
+         diem_classify++;
+      }
+   }
+   // Xử lý nếu là Object JSON
+   else if (doc.is<JsonObject>())
+   {
+      Serial.println("parseArrayClassify: detected JSON Object");
+      JsonObject root = doc.as<JsonObject>();
+      for (JsonPair kv : root)
+      {
+         if (diem_classify >= 7)
+            break;
+         JsonObject p = kv.value().as<JsonObject>();
+         if (p.isNull())
+            continue;
+
+         // --- THAY ĐỔI 3: Gán vào mảng Classify ---
+         Classify[diem_classify].x = p["X"] | 0;
+         Classify[diem_classify].y = p["Y"] | 0;
+         Classify[diem_classify].z = p["Z"] | 0;
+         Classify[diem_classify].t = p["T"] | 0;
+         Classify[diem_classify].speedX = p["speed_X"] | 0;
+         Classify[diem_classify].speedY = p["speed_Y"] | 0;
+         Classify[diem_classify].speedZ = p["speed_Z"] | 0;
+         Classify[diem_classify].speedT = p["speed_T"] | 0;
+
+         diem_classify++;
+      }
+   }
+
+   // --- THAY ĐỔI 4: Cập nhật biến tổng bước riêng ---
+   // TotalStepsClassify = diem_classify;
+
+   Serial.print("=> Da cap nhat Classify points: ");
+   Serial.println(diem_classify);
+
+   if (diem_classify > 0)
+   {
+      // In thử điểm đầu tiên của Classify để kiểm tra
+      Serial.printf("Classify[0] X=%.1f Y=%.1f Z=%.1f T=%d\n",
+                    Classify[0].x,
+                    Classify[0].y,
+                    Classify[0].z,
+                    Classify[0].t);
    }
 }
 
@@ -229,15 +352,20 @@ void streamCallback(StreamData data)
          {
             parseArray(result.to<String>());
          }
-
-         tmp.get(result, "Classify/TotalSteps");
-         if (result.success)
-            TotalSteps = result.to<int>();
-
+         /*
+                  tmp.get(result, "Classify/TotalSteps");
+                  if (result.success)
+                     TotalSteps = result.to<int>();
+         */
          tmp.get(result, "Classify/Coordinates_auto");
          if (result.success)
          {
-            parseArray(result.to<String>());
+            parseArrayClassify(result.to<String>());
+            Classify[0].y += 400;
+            Classify[3].y += 400;
+            Classify[4].y += 400;
+            Classify[5].y += 400;
+            Classify[6].y += 400;
          }
       }
    }
@@ -324,24 +452,31 @@ void streamCallback(StreamData data)
          Serial.println(Coordinates_auto[i].speedT);
       }
    }
-    if (data.dataPath() == "/Autochain/TotalSteps")
+   if (data.dataPath() == "/Autochain/TotalSteps")
    {
       Mode = -3;
       TotalSteps = data.intData();
       Serial.print("gia tri cua totalsteps ");
       Serial.println(TotalSteps);
    }
-    if (data.dataPath() == "/Classify/Coordinates_auto")
+   if (data.dataPath() == "/Classify/Coordinates_auto")
    {
       Mode = -3; // Chuyển về mode CLASSIFY khi nhận lệnh mới
-      parseArray(data.stringData());
+      parseArrayClassify(data.stringData());
+      Classify[0].y += 400;
+      Classify[3].y += 400;
+      Classify[4].y += 400;
+      Classify[5].y += 400;
+      Classify[6].y += 400;
    }
+   /*
     if (data.dataPath() == "/Classify/TotalSteps")
    {
       Mode = -3;
       TotalSteps = data.intData();
    }
-    if (data.dataPath() == "/control/Autochain/Coordinates_auto")
+   */
+   if (data.dataPath() == "/control/Autochain/Coordinates_auto")
    {
       String jsonStr = data.stringData();
 
