@@ -28,7 +28,7 @@ XYZT_Coordinates CurrentPosition;
 // StaticJsonDocument<4096> jsonDocument;
 //  khởi tạo các đối tượng AccelStepper cho các trục
 AccelStepper Axis_Base(AccelStepper::DRIVER, 21, 19);     // Pin STEP=21, DIR=19
-AccelStepper Axis_Shoulder(AccelStepper::DRIVER, 32, 33); // Pin STEP=32, DIR=33
+AccelStepper Axis_Shoulder(AccelStepper::DRIVER, 33, 32); // Pin STEP=33, DIR=32
 AccelStepper Axis_Elbow(AccelStepper::DRIVER, 26, 27);    // Pin STEP=26, DIR=27
 
 volatile int Direction_Gripper = 0;
@@ -77,7 +77,7 @@ unsigned long buttonTimer = 0;
 bool buttonActive = false;
 
 // biến cục bộ file sketch_oct3a_robot.ino
-const float MM_PER_PULSE = 0.078;
+const float MM_PER_PULSE = 0.139;
 // const float SIZE_SMALL_LIMIT  = 28.5;
 // const float SIZE_MEDIUM_LIMIT = 32.0;
 
@@ -89,15 +89,14 @@ unsigned long time_step_start = 0;
 int SPEED_NORMAL = 10;
 int SPEED_CRAWL = 10;
 
-float Kp = 2.5; 
+float Kp = 2.5;
 float Ki = 0.01;
-float Kd = 10.0; 
-#define PID_MIN_PWM   10 
-#define PID_MAX_PWM   100
-#define PID_TOLERANCE 2   // Sai số cho phép (+/- 2 xung) khi lùi ra
+float Kd = 10.0;
+#define PID_MIN_PWM 10
+#define PID_MAX_PWM 100
+#define PID_TOLERANCE 2 // Sai số cho phép (+/- 2 xung) khi lùi ra
 #define PID_SAMPLE_TIME 10
 const int STEP_PULSES = 5;
-
 
 void handleSerialInput()
 {
@@ -222,7 +221,6 @@ void handleSerialInput()
             Classify[5].y += 400;
             Classify[6].y += 400;
 
-
             // Reset biến chạy
             autoClassifyStep = 0;
             Disable_Axis_Gripper = 0;
@@ -309,9 +307,9 @@ float pid_prev_error = 0;
 unsigned long pid_last_time = 0;
 unsigned long pid_stable_start = 0;
 bool pid_is_stable = false;
-#define HYBRID_APPROACH_SPEED  200  // Tốc độ lao tới (Nhanh)
-#define HYBRID_SWITCH_DIST     40   // Cách đích bao nhiêu xung thì bắt đầu thả trôi vào PID?
-                                    // (Số càng lớn thì PID càng sớm can thiệp, số càng nhỏ thì vọt lố càng xa)
+#define HYBRID_APPROACH_SPEED 200 // Tốc độ lao tới (Nhanh)
+#define HYBRID_SWITCH_DIST 40     // Cách đích bao nhiêu xung thì bắt đầu thả trôi vào PID?
+                                  // (Số càng lớn thì PID càng sớm can thiệp, số càng nhỏ thì vọt lố càng xa)
 
 int Task_MoveAbsolute_Hybrid(long target)
 {
@@ -620,7 +618,7 @@ int Task_Classify()
     // ====================================================
     case 4:
 
-        Object_Size = (current + 20) * MM_PER_PULSE + 23; // offset 23mm cho phần cơ khí
+        Object_Size = (current + 20) * MM_PER_PULSE + 19.83; // offset 23mm cho phần cơ khí
         Serial.println("============== RESULT ==============");
         Serial.printf(" Encoder Pos : %ld\n", current + 20);
         Serial.printf(" Size        : %.2f mm\n", Object_Size);
@@ -734,17 +732,14 @@ int DetachObject()
 #define HOME_SPEED_SLOW 200.0
 #define HOME_SPEED_RETREAT 400.0
 #define HOME_RETREAT_DIST 400 // Bước lùi
-#define LIMIT_ACTIVE_LEVEL 1  // Mức kích hoạt công tắc hành trình = 0 test nên để bằng 1
+#define LIMIT_ACTIVE_LEVEL 0  // Mức kích hoạt công tắc hành trình = 0 test nên để bằng 1
 
 void SetHomeAll(void *parameter)
 {
-    // --- BIẾN TRẠNG THÁI CỤC BỘ (STATIC để giữ giá trị qua các vòng lặp) ---
-    // 0: Idle, 1: Fast, 2: Stopping1, 3: Retreat, 4: Slow, 5: Stopping2, 6: Done
     static int state_Elbow = 0;
     static int state_Shoulder = 0;
     static int state_Base = 0;
 
-    //  (Debounce)
     static unsigned long debounce_timer_Elbow = 0;
     static int last_read_Elbow = !LIMIT_ACTIVE_LEVEL;
 
@@ -756,128 +751,109 @@ void SetHomeAll(void *parameter)
 
     static int complete_homing_gripper = 0;
 
-    // Cài đặt gia tốc
     Axis_Base.setAcceleration(5000);
     Axis_Shoulder.setAcceleration(5000);
     Axis_Elbow.setAcceleration(5000);
 
     for (;;)
     {
-        // Chỉ chạy khi Mode = -2
         if (Mode == -2)
         {
             // ============================================================
-            // TRỤC 1: ELBOW (Ưu tiên Home trước để nâng tay lên)
+            // TRỤC 1: BASE
             // ============================================================
-
-            // Bắt đầu kích hoạt
-            if (state_Elbow == 0)
+            if (state_Base == 0)
             {
-                Axis_Elbow.setMaxSpeed(HOME_SPEED_FAST);
-                Axis_Elbow.moveTo(-1000000); // Chạy về hướng âm vô cùng
-                state_Elbow = 1;             // Chuyển sang chạy nhanh
-                Serial.println("ELBOW: Start Homing Fast...");
+                Axis_Base.setMaxSpeed(HOME_SPEED_FAST);
+                Axis_Base.moveTo(-1000000);
+                state_Base = 1;
+                Serial.println("BASE: Start Homing Fast...");
             }
 
-            // Giai đoạn 1: Chạy nhanh tìm công tắc
-            if (state_Elbow == 1)
+            if (state_Base == 1)
             {
-                // --- Logic đọc nút nhấn chống rung ---
-                int reading = digitalRead(LIM_ELBOW_PIN);
-                if (reading != last_read_Elbow)
-                    debounce_timer_Elbow = millis();
-                last_read_Elbow = reading;
+                int reading = digitalRead(LIM_BASE_PIN);
+                if (reading != last_read_Base)
+                    debounce_timer_Base = millis();
+                last_read_Base = reading;
+                Serial.print("Base Limit: ");
+                Serial.print(reading);
+                Serial.print(" / ActiveLevel: ");
+                Serial.print(LIMIT_ACTIVE_LEVEL);
+                Serial.print(" / DebounceOK: ");
+                Serial.println((millis() - debounce_timer_Base) > 50);
 
-                bool isPressed = ((millis() - debounce_timer_Elbow) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
-                // -------------------------------------
+                bool isPressed = (reading == LIMIT_ACTIVE_LEVEL);
 
                 if (isPressed)
                 {
-                    Axis_Elbow.stop(); // Ra lệnh dừng
-                    state_Elbow = 2;   // Chờ dừng hẳn
-                    Serial.println("ELBOW: Touched! Stopping...");
+                    Axis_Base.stop();
+                    state_Base = 2;
                 }
                 else
-                {
-                    Axis_Elbow.run(); // Tiếp tục chạy
-                }
+                    Axis_Base.run();
             }
 
-            // Giai đoạn 2: Chờ động cơ dừng hẳn (do quán tính)
-            if (state_Elbow == 2)
+            if (state_Base == 2)
             {
-                if (!Axis_Elbow.isRunning())
+                if (!Axis_Base.isRunning())
                 {
-                    Axis_Elbow.setCurrentPosition(0); // Tạm set 0
-                    Axis_Elbow.setMaxSpeed(HOME_SPEED_RETREAT);
-                    Axis_Elbow.moveTo(HOME_RETREAT_DIST); // Lùi ra
-                    state_Elbow = 3;
-                    Serial.println("ELBOW: Stopped. Retreating...");
+                    Axis_Base.setCurrentPosition(0);
+                    Axis_Base.setMaxSpeed(HOME_SPEED_RETREAT);
+                    Axis_Base.moveTo(HOME_RETREAT_DIST);
+                    state_Base = 3;
                 }
                 else
-                {
-                    Axis_Elbow.run();
-                }
+                    Axis_Base.run();
             }
 
-            // Giai đoạn 3: Lùi ra
-            if (state_Elbow == 3)
+            if (state_Base == 3)
             {
-                if (Axis_Elbow.distanceToGo() == 0)
+                if (Axis_Base.distanceToGo() == 0)
                 {
-                    Axis_Elbow.setMaxSpeed(HOME_SPEED_SLOW);
-                    Axis_Elbow.moveTo(-1000000); // Dò lại chậm
-                    state_Elbow = 4;
-                    Serial.println("ELBOW: Retreat Done. Slow Approach...");
+                    Axis_Base.setMaxSpeed(HOME_SPEED_SLOW);
+                    Axis_Base.moveTo(-1000000);
+                    state_Base = 4;
                 }
                 else
-                {
-                    Axis_Elbow.run();
-                }
+                    Axis_Base.run();
             }
 
-            // Giai đoạn 4: Chạy chậm dò chính xác
-            if (state_Elbow == 4)
+            if (state_Base == 4)
             {
-                int reading = digitalRead(LIM_ELBOW_PIN);
-                if (reading != last_read_Elbow)
-                    debounce_timer_Elbow = millis();
-                last_read_Elbow = reading;
-                bool isPressed = ((millis() - debounce_timer_Elbow) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
+                int reading = digitalRead(LIM_BASE_PIN);
+                if (reading != last_read_Base)
+                    debounce_timer_Base = millis();
+                last_read_Base = reading;
+
+                bool isPressed = ((millis() - debounce_timer_Base) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
 
                 if (isPressed)
                 {
-                    Axis_Elbow.stop();
-                    state_Elbow = 5; // Chờ dừng lần cuối
-                    Serial.println("ELBOW: Touched Precision! Stopping...");
+                    Axis_Base.stop();
+                    state_Base = 5;
                 }
                 else
-                {
-                    Axis_Elbow.run();
-                }
+                    Axis_Base.run();
             }
 
-            // Giai đoạn 5: Chốt điểm 0
-            if (state_Elbow == 5)
+            if (state_Base == 5)
             {
-                if (!Axis_Elbow.isRunning())
+                if (!Axis_Base.isRunning())
                 {
-                    Axis_Elbow.setCurrentPosition(0); // GỐC TỌA ĐỘ CHUẨN
-                    Axis_Elbow.moveTo(0);
-                    state_Elbow = 6; // Xong
-                    Serial.println("ELBOW: HOMED! ");
+                    Axis_Base.setCurrentPosition(0);
+                    Axis_Base.moveTo(0);
+                    state_Base = 6;
+                    Serial.println("BASE: HOMED");
                 }
                 else
-                {
-                    Axis_Elbow.run();
-                }
+                    Axis_Base.run();
             }
 
             // ============================================================
-            // TRỤC 2: SHOULDER (Chỉ chạy khi Elbow đã xong: state_Elbow == 6)
+            // TRỤC 2: SHOULDER (Chỉ chạy khi Base xong)
             // ============================================================
-
-            if (state_Elbow == 6)
+            if (state_Base == 6)
             {
                 if (state_Shoulder == 0)
                 {
@@ -893,18 +869,16 @@ void SetHomeAll(void *parameter)
                     if (reading != last_read_Shoulder)
                         debounce_timer_Shoulder = millis();
                     last_read_Shoulder = reading;
+
                     bool isPressed = ((millis() - debounce_timer_Shoulder) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
 
                     if (isPressed)
                     {
                         Axis_Shoulder.stop();
                         state_Shoulder = 2;
-                        Serial.println("SHOULDER: Touched! Stopping...");
                     }
                     else
-                    {
                         Axis_Shoulder.run();
-                    }
                 }
 
                 if (state_Shoulder == 2)
@@ -917,9 +891,7 @@ void SetHomeAll(void *parameter)
                         state_Shoulder = 3;
                     }
                     else
-                    {
                         Axis_Shoulder.run();
-                    }
                 }
 
                 if (state_Shoulder == 3)
@@ -931,9 +903,7 @@ void SetHomeAll(void *parameter)
                         state_Shoulder = 4;
                     }
                     else
-                    {
                         Axis_Shoulder.run();
-                    }
                 }
 
                 if (state_Shoulder == 4)
@@ -942,6 +912,7 @@ void SetHomeAll(void *parameter)
                     if (reading != last_read_Shoulder)
                         debounce_timer_Shoulder = millis();
                     last_read_Shoulder = reading;
+
                     bool isPressed = ((millis() - debounce_timer_Shoulder) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
 
                     if (isPressed)
@@ -950,9 +921,7 @@ void SetHomeAll(void *parameter)
                         state_Shoulder = 5;
                     }
                     else
-                    {
                         Axis_Shoulder.run();
-                    }
                 }
 
                 if (state_Shoulder == 5)
@@ -961,155 +930,137 @@ void SetHomeAll(void *parameter)
                     {
                         Axis_Shoulder.setCurrentPosition(0);
                         Axis_Shoulder.moveTo(0);
-                        state_Shoulder = 6; // Xong
-                        Serial.println("SHOULDER: HOMED! ");
+                        state_Shoulder = 6;
+                        Serial.println("SHOULDER: HOMED");
                     }
                     else
-                    {
                         Axis_Shoulder.run();
-                    }
                 }
             }
 
             // ============================================================
-            // TRỤC 3: BASE (Chỉ chạy khi Shoulder đã xong: state_Shoulder == 6)
+            // TRỤC 3: ELBOW (Chỉ chạy khi Shoulder xong)
             // ============================================================
-
             if (state_Shoulder == 6)
             {
-                if (state_Base == 0)
+                if (state_Elbow == 0)
                 {
-                    Axis_Base.setMaxSpeed(HOME_SPEED_FAST);
-                    Axis_Base.moveTo(-1000000);
-                    state_Base = 1;
-                    Serial.println("BASE: Start Homing Fast...");
+                    Axis_Elbow.setMaxSpeed(400);
+                    Axis_Elbow.moveTo(-1000000);
+                    state_Elbow = 1;
+                    Serial.println("ELBOW: Start Homing Fast...");
                 }
 
-                if (state_Base == 1)
+                if (state_Elbow == 1)
                 {
-                    int reading = digitalRead(LIM_BASE_PIN);
-                    if (reading != last_read_Base)
-                        debounce_timer_Base = millis();
-                    last_read_Base = reading;
-                    bool isPressed = ((millis() - debounce_timer_Base) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
+                    int reading = digitalRead(LIM_ELBOW_PIN);
+                    if (reading != last_read_Elbow)
+                        debounce_timer_Elbow = millis();
+                    last_read_Elbow = reading;
+
+                    bool isPressed = ((millis() - debounce_timer_Elbow) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
 
                     if (isPressed)
                     {
-                        Axis_Base.stop();
-                        state_Base = 2;
-                        Serial.println("BASE: Touched! Stopping...");
+                        Axis_Elbow.stop();
+                        state_Elbow = 2;
                     }
                     else
-                    {
-                        Axis_Base.run();
-                    }
+                        Axis_Elbow.run();
                 }
 
-                if (state_Base == 2)
+                if (state_Elbow == 2)
                 {
-                    if (!Axis_Base.isRunning())
+                    if (!Axis_Elbow.isRunning())
                     {
-                        Axis_Base.setCurrentPosition(0);
-                        Axis_Base.setMaxSpeed(HOME_SPEED_RETREAT);
-                        Axis_Base.moveTo(HOME_RETREAT_DIST);
-                        state_Base = 3;
+                        Axis_Elbow.setCurrentPosition(0);
+                        Axis_Elbow.setMaxSpeed(HOME_SPEED_RETREAT);
+                        Axis_Elbow.moveTo(HOME_RETREAT_DIST);
+                        state_Elbow = 3;
                     }
                     else
-                    {
-                        Axis_Base.run();
-                    }
+                        Axis_Elbow.run();
                 }
 
-                if (state_Base == 3)
+                if (state_Elbow == 3)
                 {
-                    if (Axis_Base.distanceToGo() == 0)
+                    if (Axis_Elbow.distanceToGo() == 0)
                     {
-                        Axis_Base.setMaxSpeed(HOME_SPEED_SLOW);
-                        Axis_Base.moveTo(-1000000);
-                        state_Base = 4;
+                        Axis_Elbow.setMaxSpeed(HOME_SPEED_SLOW);
+                        Axis_Elbow.moveTo(-1000000);
+                        state_Elbow = 4;
                     }
                     else
-                    {
-                        Axis_Base.run();
-                    }
+                        Axis_Elbow.run();
                 }
 
-                if (state_Base == 4)
+                if (state_Elbow == 4)
                 {
-                    int reading = digitalRead(LIM_BASE_PIN);
-                    if (reading != last_read_Base)
-                        debounce_timer_Base = millis();
-                    last_read_Base = reading;
-                    bool isPressed = ((millis() - debounce_timer_Base) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
+                    int reading = digitalRead(LIM_ELBOW_PIN);
+                    if (reading != last_read_Elbow)
+                        debounce_timer_Elbow = millis();
+                    last_read_Elbow = reading;
+
+                    bool isPressed = ((millis() - debounce_timer_Elbow) > 50) && (reading == LIMIT_ACTIVE_LEVEL);
 
                     if (isPressed)
                     {
-                        Axis_Base.stop();
-                        state_Base = 5;
+                        Axis_Elbow.stop();
+                        state_Elbow = 5;
                     }
                     else
-                    {
-                        Axis_Base.run();
-                    }
+                        Axis_Elbow.run();
                 }
 
-                if (state_Base == 5)
+                if (state_Elbow == 5)
                 {
-                    if (!Axis_Base.isRunning())
+                    if (!Axis_Elbow.isRunning())
                     {
-                        Axis_Base.setCurrentPosition(0);
-                        Axis_Base.moveTo(0);
-                        state_Base = 6; // Xong
-                        Serial.println("BASE: HOMED! ");
+                        Axis_Elbow.setCurrentPosition(0);
+                        Axis_Elbow.moveTo(0);
+                        state_Elbow = 6;
+                        Serial.println("ELBOW: HOMED");
                     }
                     else
-                    {
-                        Axis_Base.run();
-                    }
+                        Axis_Elbow.run();
                 }
             }
-            if (state_Base == 6)
+
+            // RUN GRIPPER AT LAST
+            if (state_Elbow == 6)
             {
                 if (Task_Homing_Gripper() == 1)
-                {
                     complete_homing_gripper = 1;
-                }
             }
-            // ============================================================
-            // KIỂM TRA HOÀN TẤT
-            // ============================================================
-            if (state_Elbow == 6 && state_Shoulder == 6 && state_Base == 6 && complete_homing_gripper == 1)
-            {
-                Serial.println(" ALL DONE! ");
 
-                // Reset biến trạng thái về 0 để lần sau chạy tiếp được
-                state_Elbow = 0;
-                state_Shoulder = 0;
-                state_Base = 0;
+            // ============================================================
+            // FINISH CHECK
+            // ============================================================
+            if (state_Base == 6 && state_Shoulder == 6 && state_Elbow == 6 && complete_homing_gripper == 1)
+            {
+                Serial.println("ALL DONE!");
+
+                state_Elbow = state_Shoulder = state_Base = 0;
                 complete_homing_gripper = 0;
 
-                debounce_timer_Elbow = 0;
-                last_read_Elbow = !LIMIT_ACTIVE_LEVEL;
+                debounce_timer_Elbow = debounce_timer_Shoulder = debounce_timer_Base = millis();
+                last_read_Elbow = last_read_Shoulder = last_read_Base = !LIMIT_ACTIVE_LEVEL;
 
-                debounce_timer_Shoulder = 0;
-                last_read_Shoulder = !LIMIT_ACTIVE_LEVEL;
-
-                debounce_timer_Base = 0;
-                last_read_Base = !LIMIT_ACTIVE_LEVEL;
-
-                // Thoát mode Homing
                 Mode = -3;
-
-                vTaskDelay(1000 / portTICK_PERIOD_MS); // Nghỉ tí
+                vTaskDelay(500 / portTICK_PERIOD_MS);
             }
 
-            // Delay cực nhỏ để không chiếm 100% CPU (Watchdog)
-            // Vì ta dùng .run() (có gia tốc) nên 1ms delay là chấp nhận được
             vTaskDelay(1 / portTICK_PERIOD_MS);
         }
         else
         {
-            // Nếu không phải mode Homing, ngủ dài
+            // RESET NGAY KHI KHÔNG Ở MODE HOMING
+            state_Elbow = state_Shoulder = state_Base = 0;
+            complete_homing_gripper = 0;
+
+            debounce_timer_Elbow = debounce_timer_Shoulder = debounce_timer_Base = 0;
+            last_read_Elbow = last_read_Shoulder = last_read_Base = !LIMIT_ACTIVE_LEVEL;
+
             vTaskDelay(100 / portTICK_PERIOD_MS);
         }
     }
@@ -1118,14 +1069,14 @@ void SetHomeAll(void *parameter)
 void ReturnToHome(void *parameter)
 {
     // Biến static để nhớ trạng thái khởi tạo
-    static bool home_initialized = false; 
+    static bool home_initialized = false;
 
     while (1)
     {
         if (Mode == -1)
         {
             // --- GIAI ĐOẠN 1: KHỞI TẠO (CHẠY 1 LẦN DUY NHẤT) ---
-            if (!home_initialized) 
+            if (!home_initialized)
             {
                 Serial.println(">> START HOMING SEQUENCE...");
 
@@ -1140,13 +1091,13 @@ void ReturnToHome(void *parameter)
 
                 // 2. Reset trạng thái cho hàm Gripper Hybrid
                 // QUAN TRỌNG: Phải reset để nó bắt đầu quy trình lao nhanh -> PID
-                move_state = 0; 
-                
+                move_state = 0;
+
                 home_initialized = true; // Đánh dấu đã khởi tạo xong
             }
 
             // --- GIAI ĐOẠN 2: THỰC THI (CHẠY LIÊN TỤC) ---
-            
+
             // 1. Chạy Stepper
             Axis_Base.run();
             Axis_Shoulder.run();
@@ -1163,13 +1114,13 @@ void ReturnToHome(void *parameter)
                 gripper_status == 1) // Gripper đã báo xong (trả về 1)
             {
                 Serial.println("✅ RETURN HOME COMPLETE!");
-                
-                Mode = -3;              // Chuyển sang Mode chờ
+
+                Mode = -3;                // Chuyển sang Mode chờ
                 home_initialized = false; // Reset cờ để lần sau dùng lại được
             }
 
             // Delay cực nhỏ để tránh Reset Watchdog nhưng đủ nhanh cho Stepper
-            vTaskDelay(1 / portTICK_PERIOD_MS); 
+            vTaskDelay(1 / portTICK_PERIOD_MS);
         }
         else
         {
@@ -1196,37 +1147,38 @@ void MoveJog(void *parameter)
             direction_Gripper_Jog = -1;
             switch (command_jog)
             {
-            case 1:
+            case 4:
+            Axis_Base.setMaxSpeed(1200);
                 Axis_Base.moveTo(10000000); // quay trái
                 Axis_Shoulder.moveTo(Axis_Shoulder.currentPosition());
                 Axis_Elbow.moveTo(Axis_Elbow.currentPosition());
                 // Serial.println("Jog Base Left");
                 break;
-            case 2:
+            case 3:
                 Axis_Base.moveTo(-10000000); // quay phải
                 Axis_Shoulder.moveTo(Axis_Shoulder.currentPosition());
                 Axis_Elbow.moveTo(Axis_Elbow.currentPosition());
                 // Serial.println("Jog Base Right");
                 break;
-            case 3:
+            case 1:
                 Axis_Shoulder.moveTo(10000000); // nâng lên
                 Axis_Base.moveTo(Axis_Base.currentPosition());
                 Axis_Elbow.moveTo(Axis_Elbow.currentPosition());
                 // Serial.println("Jog Shoulder Up");
                 break;
-            case 4:
+            case 2:
                 Axis_Shoulder.moveTo(-10000000); // hạ xuống
                 Axis_Base.moveTo(Axis_Base.currentPosition());
                 Axis_Elbow.moveTo(Axis_Elbow.currentPosition());
                 // Serial.println("Jog Shoulder Down");
                 break;
-            case 5:
+            case 6:
                 Axis_Elbow.moveTo(10000000); // vươn ra
                 Axis_Base.moveTo(Axis_Base.currentPosition());
                 Axis_Shoulder.moveTo(Axis_Shoulder.currentPosition());
                 // Serial.println("Jog Elbow Extend");
                 break; // vươn ra
-            case 6:
+            case 5:
                 Axis_Elbow.moveTo(-10000000); // thu lại
                 Axis_Base.moveTo(Axis_Base.currentPosition());
                 Axis_Shoulder.moveTo(Axis_Shoulder.currentPosition());
@@ -1290,10 +1242,10 @@ void Robot_task_AUTO(void *parameter)
                 }
             }
             // Đặt tốc độ MỚI và mục tiêu MỚI nếu bước thay đổi
-            Axis_Base.setMaxSpeed(Coordinates_auto[autoChainStep].speedX);
-            Axis_Shoulder.setMaxSpeed(Coordinates_auto[autoChainStep].speedY);
-            Axis_Elbow.setMaxSpeed(Coordinates_auto[autoChainStep].speedZ);
-            Axis_Gripper_Speed = Coordinates_auto[autoChainStep].speedT;
+            Axis_Base.setMaxSpeed(newSpeed);
+            Axis_Shoulder.setMaxSpeed(newSpeed);
+            Axis_Elbow.setMaxSpeed(newSpeed);
+            Axis_Gripper_Speed = newSpeed;
 
             Axis_Base.moveTo(Coordinates_auto[autoChainStep].x);
             Axis_Shoulder.moveTo(Coordinates_auto[autoChainStep].y);
@@ -1346,13 +1298,13 @@ Classify[3] = {X: vật, Y: vật, Z: vật, T: 0, speed_X:800, speed_Y:800, spe
 Classify[4] = {X: vị trí thả nhỏ, Y: vị trí thả nhỏ, Z: vị trí thả nhỏ, T: 0, speed_X:800, speed_Y:800, speed_Z:800, speed_T:0} //cộng Y thêm 400 để tránh va chạm
 Classify[5] = {X: vị trí thả vừa, Y: vị trí thả vừa, Z: vị trí thả vừa, T: 0, speed_X:800, speed_Y:800, speed_Z:800, speed_T:0} //cộng Y thêm 400 để tránh va chạm
 Classify[6] = {X: vị trí thả lớn, Y: vị trí thả lớn, Z: vị trí thả lớn, T: 0, speed_X:800, speed_Y:800, speed_Z:800, speed_T:0} //cộng Y thêm 400 để tránh va chạm
-Classify[7] = {X: thùng, Y: thùng, Z: thùng, T: 600, speed_X:800, speed_Y:800, speed_Z:800, speed_T:0}
+Classify[7] = {X: 0, Y: 0, Z: 0, T: 600, speed_X:800, speed_Y:800, speed_Z:800, speed_T:0}
 */
 int flag_stop = 0;
 int MoveToStep_7 = 0;
 void Robot_task_Classify(void *parameter)
 {
-    
+
     while (1)
     {
         if (Mode == 2)
@@ -1447,7 +1399,7 @@ void Robot_task_Classify(void *parameter)
                 Direction_Gripper = -1; // dừng
             }
             */
-            if (autoClassifyStep == 2)           
+            if (autoClassifyStep == 2)
             {
                 flag_stop = 1;
                 if (Task_Classify() == 1)
@@ -1458,7 +1410,7 @@ void Robot_task_Classify(void *parameter)
             else if (autoClassifyStep == 7)
             {
                 flag_stop = 1;
-                if (Task_MoveAbsolute_Hybrid(600) == 1) //mở càng ra 600 xung
+                if (Task_MoveAbsolute_Hybrid(600) == 1) // mở càng ra 600 xung
                 {
                     flag_stop = 0;
                 }
@@ -1563,6 +1515,7 @@ void setup()
     Axis_Shoulder.moveTo(0);
     Axis_Elbow.moveTo(0);
 
+    Axis_Shoulder.setPinsInverted(true, false, false); // đảo base
     // Serial.println("Robot chua san sang.");
     pinMode(0, INPUT_PULLUP);
     setupWifiAP();
@@ -1601,7 +1554,7 @@ void loop()
             Serial.println("!!! MAT KET NOI WIFI - DUNG KHAN CAP !!!");
             task = "STOP";
         }
-        Serial.println(task);
+        // Serial.println(task);
     }
     if (digitalRead(0) == LOW)
     {

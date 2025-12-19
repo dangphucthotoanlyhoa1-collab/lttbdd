@@ -24,7 +24,7 @@ int last_Number_of_Objects_small = -99;
 int last_Number_of_Objects_medium = -99;
 int last_Number_of_Objects_large = -99;
 unsigned long sendDataPrevMillis = 0;
-
+ int newSpeed = 100;
 // int Object_Small_size;
 // int Object_Large_size;
 // int Object_Medium_size;
@@ -408,7 +408,7 @@ void streamCallback(StreamData data)
       {
          Mode = -3;
       }
-      if (task == "Classify")
+      if (task == "Classify" || task == "CLASSIFY")
       {
          Mode = 2;
       }
@@ -419,6 +419,11 @@ void streamCallback(StreamData data)
       else if (task == "SetHome")
       {
          Mode = -2;
+      }
+      else if (task == "Reset"){
+          Number_of_Objects_small = 0;
+         Number_of_Objects_medium = 0;
+         Number_of_Objects_large = 0;
       }
       Serial.print("Mode set to: ");
       Serial.println(Mode);
@@ -483,6 +488,15 @@ void streamCallback(StreamData data)
       Serial.println(">> Nhan duoc mang toa do tu App!");
 
       parseArray(jsonStr);
+   }
+   if (data.dataPath() == "/speed")
+   {
+       newSpeed = 10 * data.intData();
+     // Axis_Base.setMaxSpeed(newSpeed);
+     // Axis_Shoulder.setMaxSpeed(newSpeed);
+     // Axis_Elbow.setMaxSpeed(newSpeed);
+     // Axis_Gripper_Speed = newSpeed;
+      Serial.printf(" Tốc độ mới: %d\n", newSpeed);
    }
 }
 

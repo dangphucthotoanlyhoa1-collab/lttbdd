@@ -42,8 +42,8 @@ typedef struct
 // Định nghĩa Chân (Pin Definitions) - Chuyển sang #define cho gọn
 #define Axis_Gripper_forward_PIN 13  // 16
 #define Axis_Gripper_backward_PIN 14  // 4
-#define LIM_BASE_PIN 4
-#define LIM_SHOULDER_PIN 23
+#define LIM_BASE_PIN 23
+#define LIM_SHOULDER_PIN 4
 #define LIM_ELBOW_PIN 25
 #define ENCODER_PIN_A 18
 #define ENCODER_PIN_B 22
@@ -115,10 +115,9 @@ extern long value_now;
 extern long time_last;
 extern long value_last;
 extern int HasConsitancy;
-
 // Biến cờ (Flag) fix lỗi Race Condition (từ câu hỏi trước)
-extern volatile bool isNewStepLoaded;
-
+//extern volatile bool isNewStepLoaded;
+extern int newSpeed;
 // Mutex (Nếu cần dùng ở file khác)
 extern portMUX_TYPE mux;
 
